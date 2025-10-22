@@ -1,10 +1,18 @@
-import Fastify from 'fastify';
+import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import { Server as SocketIOServer } from 'socket.io';
 import { createWSServer } from './ws.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+// Extend Fastify instance type
+declare module 'fastify' {
+  interface FastifyInstance {
+    io?: SocketIOServer;
+  }
+}
 
 async function start() {
   const fastify = Fastify({
@@ -33,7 +41,7 @@ async function start() {
 
   // Stats endpoint
   fastify.get('/stats', async () => {
-    const stats = fastify.io?.getStats() || {};
+    const stats = (fastify.io as any)?.getStats?.() || {};
     return stats;
   });
 
