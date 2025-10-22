@@ -10,7 +10,6 @@ export default function Canvas({ width, height }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pulses = useStore((state) => state.pulses);
   const showingBurst = useStore((state) => state.showingBurst);
-  const currentStreak = useStore((state) => state.currentStreak);
   const clearOldPulses = useStore((state) => state.clearOldPulses);
 
   useEffect(() => {
@@ -57,6 +56,15 @@ export default function Canvas({ width, height }: CanvasProps) {
         ctx.shadowColor = pulse.color;
         ctx.fill();
         ctx.shadowBlur = 0;
+
+        // Draw username label
+        if (opacity > 0.3) {
+          ctx.font = '12px system-ui, sans-serif';
+          ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`User${pulse.ordinal}`, pulse.x, pulse.y - radius - 15);
+        }
       });
 
       // Draw burst effect
