@@ -1,18 +1,7 @@
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { Server as SocketIOServer } from 'socket.io';
+import { config } from './env.js';
 import { createWSServer } from './ws.js';
-
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
-
-// Extend Fastify instance type
-declare module 'fastify' {
-  interface FastifyInstance {
-    io?: SocketIOServer;
-  }
-}
 
 async function start() {
   const fastify = Fastify({
@@ -28,42 +17,27 @@ async function start() {
     },
   });
 
-  // Register CORS
   await fastify.register(cors, {
-    origin: CLIENT_URL,
+    origin: config.clientUrls,
     credentials: true,
   });
 
-  // Health check endpoint
+  const wsServer = createWSServer(fastify.server);
+
   fastify.get('/health', async () => {
     return { status: 'ok', timestamp: Date.now() };
   });
 
-  // Stats endpoint
   fastify.get('/stats', async () => {
-    const stats = (fastify.io as any)?.getStats?.() || {};
-    return stats;
+    return wsServer.getStats();
   });
 
   try {
-    // Initialize WebSocket server before starting HTTP server
-    const io = createWSServer(fastify.server);
-    fastify.decorate('io', io);
-    
-    await fastify.listen({ port: PORT, host: HOST });
+    await fastify.listen({ port: config.port, host: config.host });
 
-    console.log(`
-╔═══════════════════════════════════════╗
-║                                       ║
-║       🌈 PULSEBOARD SERVER 🌈         ║
-║                                       ║
-║  Server running on:                   ║
-║  → http://${HOST}:${PORT}           ║
-║                                       ║
-║  WebSocket ready for connections      ║
-║                                       ║
-╚═══════════════════════════════════════╝
-    `);
+    console.log(`[pulseboard] server listening on ${config.host}:${config.port}`);
+    console.log(`[pulseboard] client origins: ${config.clientUrls.join(', ')}`);
+    console.log(`[pulseboard] discord webhooks: ${config.discordWebhookUrl ? 'enabled' : 'disabled'}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

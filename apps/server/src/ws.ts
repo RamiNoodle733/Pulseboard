@@ -7,13 +7,28 @@ import type {
   InterServerEvents,
   SocketData,
   User,
+  WSStats,
 } from './types.js';
+import { config } from './env.js';
 import { checkPulseLimit, checkColorChangeCooldown } from './rateLimit.js';
 import { createStreakManager } from './streak.js';
+import { notifyDiscord } from './discord.js';
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
-export function createWSServer(httpServer: HTTPServer) {
+function extractIp(socket: { handshake: { headers: Record<string, string | string[] | undefined>; address: string } }): string {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  if (Array.isArray(forwarded) && forwarded.length > 0) return forwarded[0];
+  return socket.handshake.address;
+}
+
+export interface WSServer {
+  io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+  getStats: () => WSStats;
+}
+
+export function createWSServer(httpServer: HTTPServer): WSServer {
   const io = new Server<
     ClientToServerEvents,
     ServerToClientEvents,
@@ -21,36 +36,37 @@ export function createWSServer(httpServer: HTTPServer) {
     SocketData
   >(httpServer, {
     cors: {
-      origin: CLIENT_URL,
+      origin: config.clientUrls,
       credentials: true,
     },
   });
 
-  // In-memory storage
   const users = new Map<string, User>();
   let userOrdinalCounter = 0;
-
   const streakManager = createStreakManager();
 
-  // Broadcast user count periodically
+  function connectedCount(): number {
+    return io.sockets.sockets.size;
+  }
+
+  // broadcast user count periodically
   setInterval(() => {
-    const connectedCount = io.sockets.sockets.size;
-    io.emit('ws:user-count', { count: connectedCount });
+    io.emit('ws:user-count', { count: connectedCount() });
   }, 5000);
 
   io.on('connection', (socket) => {
-    console.log(`🔌 Socket connected: ${socket.id}`);
+    console.log(`[ws] socket connected: ${socket.id}`);
 
-    // Handle user join
-    socket.on('ws:join', ({ color }) => {
-      // Validate color (basic hex validation)
-      if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
-        socket.emit('ws:error', { message: 'Invalid color format' });
+    socket.on('ws:join', ({ color, userAgent }) => {
+      if (!HEX_COLOR.test(color)) {
+        socket.emit('ws:error', { message: 'invalid color format' });
         return;
       }
 
       const userId = nanoid();
       userOrdinalCounter += 1;
+      const ip = extractIp(socket);
+      const ua = userAgent || 'unknown';
 
       const user: User = {
         id: userId,
@@ -59,117 +75,147 @@ export function createWSServer(httpServer: HTTPServer) {
         createdAt: Date.now(),
         lastPulse: 0,
         lastColorChange: Date.now(),
+        userAgent: ua,
+        ip,
       };
 
       users.set(userId, user);
 
-      // Store user data in socket
       socket.data.userId = userId;
       socket.data.ordinal = userOrdinalCounter;
       socket.data.color = color;
+      socket.data.userAgent = ua;
 
-      console.log(`👤 User${userOrdinalCounter} joined with color ${color}`);
+      console.log(`[user] User${userOrdinalCounter} joined with ${color}`);
 
-      // Send welcome message
+      const count = connectedCount();
+
       socket.emit('ws:joined', {
         ordinal: userOrdinalCounter,
         color,
         streak: streakManager.getCurrentStreak(),
         bestStreak: streakManager.getBestStreak(),
+        syncRequired: streakManager.getWindowState(count).required,
       });
 
-      // Broadcast user count update
-      io.emit('ws:user-count', { count: io.sockets.sockets.size });
+      io.emit('ws:user-count', { count });
+
+      notifyDiscord('user_join', {
+        ordinal: userOrdinalCounter,
+        color,
+        ip,
+        userAgent: ua,
+        userCount: count,
+      });
     });
 
-    // Handle pulse
     socket.on('ws:pulse', async () => {
       const userId = socket.data.userId;
       if (!userId) {
-        socket.emit('ws:error', { message: 'Not authenticated' });
+        socket.emit('ws:error', { message: 'not authenticated' });
         return;
       }
 
       const user = users.get(userId);
       if (!user) {
-        socket.emit('ws:error', { message: 'User not found' });
+        socket.emit('ws:error', { message: 'user not found' });
         return;
       }
 
-      // Check rate limit
       const allowed = await checkPulseLimit(userId);
       if (!allowed) {
-        socket.emit('ws:error', { message: 'Rate limited. Slow down!' });
+        socket.emit('ws:error', { message: 'rate limited. slow down.' });
         return;
       }
 
       const now = Date.now();
       user.lastPulse = now;
 
-      // Add pulse to streak manager
-      const result = streakManager.addPulse(userId, now);
+      const count = connectedCount();
+      const result = streakManager.addPulse(userId, now, count);
 
-      // Broadcast pulse to all clients
+      // server-generated positions so all clients see the same layout
+      const x = Math.random();
+      const y = Math.random();
+
       io.emit('ws:pulse', {
         userId,
         color: user.color,
         t: now,
         ordinal: user.ordinal,
+        x,
+        y,
       });
 
-      // If streak increased, celebrate!
+      // broadcast sync window state after every pulse
+      const windowState = streakManager.getWindowState(count);
+      io.emit('ws:sync-state', {
+        windowEnd: windowState.windowEnd,
+        contributors: windowState.contributors,
+        required: windowState.required,
+      });
+
       if (result.streakIncreased) {
+        const streak = streakManager.getCurrentStreak();
         io.emit('ws:burst', {
-          streak: streakManager.getCurrentStreak(),
+          streak,
           contributors: result.contributors,
         });
+
+        if (streak % 5 === 0 || streak === streakManager.getBestStreak()) {
+          notifyDiscord(
+            streak === streakManager.getBestStreak() ? 'streak_record' : 'streak_milestone',
+            {
+              ordinal: user.ordinal,
+              color: user.color,
+              ip: user.ip,
+              userAgent: user.userAgent,
+              userCount: count,
+              extra: { streak, contributors: result.contributors },
+            },
+          );
+        }
       }
 
-      // If streak broke, notify
       if (result.streakBroken) {
         io.emit('ws:streak-broken');
       }
     });
 
-    // Handle color change
     socket.on('ws:change-color', ({ color }) => {
       const userId = socket.data.userId;
       if (!userId) {
-        socket.emit('ws:error', { message: 'Not authenticated' });
+        socket.emit('ws:error', { message: 'not authenticated' });
         return;
       }
 
       const user = users.get(userId);
       if (!user) {
-        socket.emit('ws:error', { message: 'User not found' });
+        socket.emit('ws:error', { message: 'user not found' });
         return;
       }
 
-      // Validate color
-      if (!/^#[0-9A-Fa-f]{6}$/.test(color)) {
-        socket.emit('ws:error', { message: 'Invalid color format' });
+      if (!HEX_COLOR.test(color)) {
+        socket.emit('ws:error', { message: 'invalid color format' });
         return;
       }
 
-      // Check cooldown
       if (!checkColorChangeCooldown(user.lastColorChange)) {
-        const remainingSeconds = Math.ceil(
-          (300000 - (Date.now() - user.lastColorChange)) / 1000
+        const remaining = Math.ceil(
+          (config.colorChangeCooldown * 1000 - (Date.now() - user.lastColorChange)) / 1000,
         );
         socket.emit('ws:error', {
-          message: `Color change on cooldown. Wait ${remainingSeconds}s`,
+          message: `color change on cooldown. wait ${remaining}s`,
         });
         return;
       }
 
-      // Update color
       user.color = color;
       user.lastColorChange = Date.now();
       socket.data.color = color;
 
-      console.log(`🎨 User${user.ordinal} changed color to ${color}`);
+      console.log(`[user] User${user.ordinal} changed color to ${color}`);
 
-      // Broadcast color change
       io.emit('ws:color-changed', {
         userId,
         color,
@@ -177,32 +223,41 @@ export function createWSServer(httpServer: HTTPServer) {
       });
     });
 
-    // Handle disconnect
     socket.on('disconnect', () => {
       const userId = socket.data.userId;
       if (userId) {
         const user = users.get(userId);
         if (user) {
-          console.log(`👋 User${user.ordinal} disconnected`);
+          console.log(`[user] User${user.ordinal} disconnected`);
+
+          notifyDiscord('user_leave', {
+            ordinal: user.ordinal,
+            color: user.color,
+            ip: user.ip,
+            userAgent: user.userAgent,
+            userCount: connectedCount() - 1,
+            extra: {
+              sessionDuration: `${Math.round((Date.now() - user.createdAt) / 1000)}s`,
+            },
+          });
         }
         users.delete(userId);
       }
-      
-      // Broadcast user count update
-      io.emit('ws:user-count', { count: io.sockets.sockets.size });
+
+      io.emit('ws:user-count', { count: connectedCount() });
     });
   });
 
-  // Add stats getter
-  (io as any).getStats = () => {
+  console.log('[ws] websocket server initialized');
+
+  function getStats(): WSStats {
+    const count = connectedCount();
     return {
-      connectedUsers: io.sockets.sockets.size,
+      connectedUsers: count,
       totalUsersCreated: userOrdinalCounter,
-      ...streakManager.getState(),
+      ...streakManager.getState(count),
     };
-  };
+  }
 
-  console.log('✅ WebSocket server initialized');
-
-  return io;
+  return { io, getStats };
 }

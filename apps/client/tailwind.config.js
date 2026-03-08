@@ -5,12 +5,23 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
+    fontFamily: {
+      mono: ['"JetBrains Mono"', 'monospace'],
+    },
     extend: {
+      colors: {
+        'terminal-green': '#00ff41',
+        'terminal-amber': '#ffb000',
+        'terminal-red': '#ff3333',
+        'surface': '#0a0a0a',
+        'surface-raised': '#111111',
+        'surface-overlay': '#1a1a1a',
+      },
       animation: {
-        'pulse-ring': 'pulse-ring 1s cubic-bezier(0, 0, 0.2, 1) infinite',
+        'pulse-ring': 'pulse-ring 1.5s cubic-bezier(0, 0, 0.2, 1) infinite',
         'pulse-dot': 'pulse-dot 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'burst': 'burst 0.6s ease-out',
-        'float': 'float 3s ease-in-out infinite',
+        'blink': 'blink 1s step-end infinite',
       },
       keyframes: {
         'pulse-ring': {
@@ -26,9 +37,9 @@ export default {
           '0%': { transform: 'scale(1)', opacity: '1' },
           '100%': { transform: 'scale(1.5)', opacity: '0' },
         },
-        'float': {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-10px)' },
+        'blink': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' },
         },
       },
     },

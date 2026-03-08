@@ -1,26 +1,22 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+import { config } from './env.js';
 
-const PULSE_RATE_POINTS = Number(process.env.PULSE_RATE_POINTS) || 5;
-const PULSE_RATE_DURATION = Number(process.env.PULSE_RATE_DURATION) || 3;
-
-// Rate limiter for pulses: 5 pulses per 3 seconds
-export const pulseLimiter = new RateLimiterMemory({
-  points: PULSE_RATE_POINTS,
-  duration: PULSE_RATE_DURATION,
-  blockDuration: 0, // Don't block, just reject
+const pulseLimiter = new RateLimiterMemory({
+  points: config.pulseRatePoints,
+  duration: config.pulseRateDuration,
+  blockDuration: 0,
 });
 
 export async function checkPulseLimit(userId: string): Promise<boolean> {
   try {
     await pulseLimiter.consume(userId, 1);
     return true;
-  } catch (err) {
+  } catch (_err: unknown) {
     return false;
   }
 }
 
 export function checkColorChangeCooldown(lastChange: number): boolean {
-  const COOLDOWN_MS = (Number(process.env.COLOR_CHANGE_COOLDOWN) || 300) * 1000; // 5 minutes default
-  const now = Date.now();
-  return now - lastChange >= COOLDOWN_MS;
+  const cooldownMs = config.colorChangeCooldown * 1000;
+  return Date.now() - lastChange >= cooldownMs;
 }
