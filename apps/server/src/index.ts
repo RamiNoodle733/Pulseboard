@@ -24,6 +24,15 @@ async function start() {
 
   const wsServer = createWSServer(fastify.server);
 
+  // graceful shutdown: save stats before exit
+  const shutdown = () => {
+    console.log('[pulseboard] shutting down, saving stats...');
+    wsServer.shutdown();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
   fastify.get('/health', async () => {
     return { status: 'ok', timestamp: Date.now() };
   });

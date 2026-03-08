@@ -12,6 +12,15 @@ export interface FeedEntry {
   countries?: string[];
 }
 
+export interface GlobalStatsPayload {
+  totalPulses: number;
+  totalSyncs: number;
+  bestStreakAllTime: number;
+  activeCities: number;
+  topCities: Array<{ city: string; pulses: number; syncs: number }>;
+  pulsesPerMinute: number;
+}
+
 export interface ServerToClientEvents {
   'ws:joined': (data: {
     ordinal: number;
@@ -20,6 +29,8 @@ export interface ServerToClientEvents {
     bestStreak: number;
     syncRequired: number;
     userCount: number;
+    city: string;
+    globalStats: GlobalStatsPayload;
   }) => void;
   'ws:pulse': (data: {
     userId: string;
@@ -29,12 +40,16 @@ export interface ServerToClientEvents {
     x: number;
     y: number;
     region: string;
+    city: string;
   }) => void;
   'ws:burst': (data: {
     streak: number;
     contributors: number;
     countries: string[];
     userIds: string[];
+    cities: string[];
+    distanceKm: number | null;
+    cityPair: string | null;
   }) => void;
   'ws:streak-broken': () => void;
   'ws:user-count': (data: { count: number }) => void;
@@ -45,6 +60,7 @@ export interface ServerToClientEvents {
   }) => void;
   'ws:error': (data: { message: string }) => void;
   'ws:feed': (data: FeedEntry) => void;
+  'ws:global-stats': (data: GlobalStatsPayload) => void;
 }
 
 export interface ClientToServerEvents {

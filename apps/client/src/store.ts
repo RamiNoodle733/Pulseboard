@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry } from './socket';
+import type { FeedEntry, GlobalStatsPayload } from './socket';
 
 export interface Pulse {
   id: string;
@@ -10,6 +10,7 @@ export interface Pulse {
   t: number;
   ordinal: number;
   region: string;
+  city: string;
 }
 
 export interface SyncEvent {
@@ -20,6 +21,12 @@ export interface SyncEvent {
   streak: number;
 }
 
+export interface CityTick {
+  city: string;
+  color: string;
+  t: number;
+}
+
 interface Store {
   // Connection & identity
   joined: boolean;
@@ -27,6 +34,7 @@ interface Store {
   myOrdinal: number | null;
   myUserId: string | null;
   myRegion: string;
+  myCity: string;
   connected: boolean;
 
   // Streaks
@@ -58,8 +66,27 @@ interface Store {
   // City leaderboard
   citySyncCounts: Record<string, number>;
 
+  // Global stats (server-persisted)
+  globalPulses: number;
+  globalSyncs: number;
+  bestStreakAllTime: number;
+  activeCities: number;
+  pulsesPerMinute: number;
+  topCities: Array<{ city: string; pulses: number; syncs: number }>;
+  myCityRank: number;
+
+  // Sync distance flash
+  lastSyncDistance: number | null;
+  lastSyncCityPair: string | null;
+  lastSyncDistanceTime: number;
+
+  // City ticker
+  cityTicker: CityTick[];
+
+  // Auto-pulse
+  isAutoPulsing: boolean;
+
   // Overlay state
-  showStats: boolean;
   showShareCard: boolean;
   lastShareableSync: SyncEvent | null;
 
@@ -77,21 +104,26 @@ interface Store {
   addFeedEntry: (entry: FeedEntry) => void;
   toggleSound: () => void;
 
-  // New actions
   setMyUserId: (userId: string) => void;
   setMyRegion: (region: string) => void;
+  setMyCity: (city: string) => void;
   incrementPulsesSent: () => void;
   incrementPulsesReceived: () => void;
   incrementSyncs: () => void;
   updateActivityLevel: (delta: number) => void;
   decayActivityLevel: () => void;
-  setShowStats: (show: boolean) => void;
   setShowShareCard: (show: boolean) => void;
   setLastShareableSync: (sync: SyncEvent) => void;
   updateCitySyncCounts: (cities: string[]) => void;
+  setGlobalStats: (stats: GlobalStatsPayload) => void;
+  setSyncDistance: (km: number | null, pair: string | null) => void;
+  addCityTick: (city: string, color: string) => void;
+  setIsAutoPulsing: (v: boolean) => void;
 }
 
 const MAX_FEED = 30;
+
+const MAX_TICKER = 30;
 
 export const useStore = create<Store>((set) => ({
   joined: false,
@@ -99,6 +131,7 @@ export const useStore = create<Store>((set) => ({
   myOrdinal: null,
   myUserId: null,
   myRegion: '',
+  myCity: '',
   connected: false,
 
   currentStreak: 0,
@@ -124,7 +157,22 @@ export const useStore = create<Store>((set) => ({
 
   citySyncCounts: {},
 
-  showStats: false,
+  globalPulses: 0,
+  globalSyncs: 0,
+  bestStreakAllTime: 0,
+  activeCities: 0,
+  pulsesPerMinute: 0,
+  topCities: [],
+  myCityRank: 0,
+
+  lastSyncDistance: null,
+  lastSyncCityPair: null,
+  lastSyncDistanceTime: 0,
+
+  cityTicker: [],
+
+  isAutoPulsing: false,
+
   showShareCard: false,
   lastShareableSync: null,
 
@@ -178,10 +226,11 @@ export const useStore = create<Store>((set) => ({
       return { soundEnabled: next };
     }),
 
-  // New actions
   setMyUserId: (userId) => set({ myUserId: userId }),
 
   setMyRegion: (region) => set({ myRegion: region }),
+
+  setMyCity: (city) => set({ myCity: city }),
 
   incrementPulsesSent: () =>
     set((state) => ({ totalPulsesSent: state.totalPulsesSent + 1 })),
@@ -198,8 +247,6 @@ export const useStore = create<Store>((set) => ({
   decayActivityLevel: () =>
     set((state) => ({ activityLevel: state.activityLevel * 0.95 })),
 
-  setShowStats: (show) => set({ showStats: show }),
-
   setShowShareCard: (show) => set({ showShareCard: show }),
 
   setLastShareableSync: (sync) => set({ lastShareableSync: sync }),
@@ -212,4 +259,34 @@ export const useStore = create<Store>((set) => ({
       }
       return { citySyncCounts: counts };
     }),
+
+  setGlobalStats: (stats) =>
+    set((state) => {
+      let rank = 0;
+      if (state.myCity) {
+        const idx = stats.topCities.findIndex((c) => c.city === state.myCity);
+        rank = idx >= 0 ? idx + 1 : 0;
+      }
+      return {
+        globalPulses: stats.totalPulses,
+        globalSyncs: stats.totalSyncs,
+        bestStreakAllTime: stats.bestStreakAllTime,
+        activeCities: stats.activeCities,
+        pulsesPerMinute: stats.pulsesPerMinute,
+        topCities: stats.topCities,
+        myCityRank: rank,
+      };
+    }),
+
+  setSyncDistance: (km, pair) =>
+    set({ lastSyncDistance: km, lastSyncCityPair: pair, lastSyncDistanceTime: Date.now() }),
+
+  addCityTick: (city, color) =>
+    set((state) => {
+      const now = Date.now();
+      const filtered = state.cityTicker.filter((t) => now - t.t < 15000);
+      return { cityTicker: [...filtered, { city, color, t: now }].slice(-MAX_TICKER) };
+    }),
+
+  setIsAutoPulsing: (v) => set({ isAutoPulsing: v }),
 }));

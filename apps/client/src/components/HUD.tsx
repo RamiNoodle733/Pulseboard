@@ -10,8 +10,6 @@ export default function HUD({ onColorEdit }: HUDProps) {
   const connected = useStore((s) => s.connected);
   const soundEnabled = useStore((s) => s.soundEnabled);
   const toggleSound = useStore((s) => s.toggleSound);
-  const showStats = useStore((s) => s.showStats);
-  const setShowStats = useStore((s) => s.setShowStats);
 
   return (
     <div
@@ -25,14 +23,8 @@ export default function HUD({ onColorEdit }: HUDProps) {
         style={{ backgroundColor: myColor }}
       />
 
-      {/* Right: stats, mute, count, status */}
+      {/* Right: mute, count, status */}
       <div className="flex items-center gap-3 pointer-events-auto">
-        <button
-          onClick={() => setShowStats(!showStats)}
-          className="text-zinc-700 hover:text-zinc-400 transition-colors text-[10px]"
-        >
-          stats
-        </button>
         <button
           onClick={toggleSound}
           className="text-zinc-600 hover:text-zinc-400 transition-colors"

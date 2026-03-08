@@ -1,15 +1,20 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket } from './socket';
-import type { FeedEntry } from './socket';
+import type { FeedEntry, GlobalStatsPayload } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import Onboarding from './components/Onboarding';
 import HUD from './components/HUD';
 import StreakDisplay from './components/StreakDisplay';
 import ColorEditor from './components/ColorEditor';
-import SessionStats from './components/SessionStats';
 import ShareCard from './components/ShareCard';
+import DataBar from './components/DataBar';
+import CityTicker from './components/CityTicker';
 import { playPulseHit, playBurstHit, haptic } from './audio';
+
+const AUTO_PULSE_IDLE_THRESHOLD = 5000; // 5s idle before auto-pulse
+const AUTO_PULSE_INTERVAL_MIN = 8000;
+const AUTO_PULSE_INTERVAL_MAX = 10000;
 
 export default function App() {
   const [dimensions, setDimensions] = useState({
@@ -23,9 +28,12 @@ export default function App() {
   const joined = useStore((s) => s.joined);
   const myColor = useStore((s) => s.myColor);
   const error = useStore((s) => s.error);
-  const showStats = useStore((s) => s.showStats);
   const showShareCard = useStore((s) => s.showShareCard);
   const lastShareableSync = useStore((s) => s.lastShareableSync);
+
+  // Interaction tracking for auto-pulse
+  const lastInteractionRef = useRef(Date.now());
+  const autoPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Resize handler
   useEffect(() => {
@@ -42,6 +50,49 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
+  // Track user interactions to reset idle timer
+  useEffect(() => {
+    const resetIdle = () => {
+      lastInteractionRef.current = Date.now();
+      useStore.getState().setIsAutoPulsing(false);
+    };
+    window.addEventListener('pointerdown', resetIdle);
+    window.addEventListener('keydown', resetIdle);
+    return () => {
+      window.removeEventListener('pointerdown', resetIdle);
+      window.removeEventListener('keydown', resetIdle);
+    };
+  }, []);
+
+  // Auto-pulse system
+  useEffect(() => {
+    if (!joined) return;
+
+    const scheduleAutoPulse = () => {
+      const delay = AUTO_PULSE_INTERVAL_MIN + Math.random() * (AUTO_PULSE_INTERVAL_MAX - AUTO_PULSE_INTERVAL_MIN);
+      autoPulseTimerRef.current = setTimeout(() => {
+        const idleTime = Date.now() - lastInteractionRef.current;
+        if (idleTime >= AUTO_PULSE_IDLE_THRESHOLD) {
+          const socket = getSocket();
+          if (socket) {
+            // Random position avoiding edges (10%-90%)
+            const x = 0.1 + Math.random() * 0.8;
+            const y = 0.1 + Math.random() * 0.7; // avoid bottom DataBar area
+            socket.emit('ws:pulse', { x, y });
+            useStore.getState().incrementPulsesSent();
+            useStore.getState().setIsAutoPulsing(true);
+          }
+        }
+        scheduleAutoPulse();
+      }, delay);
+    };
+
+    scheduleAutoPulse();
+    return () => {
+      if (autoPulseTimerRef.current) clearTimeout(autoPulseTimerRef.current);
+    };
+  }, [joined]);
+
   // Socket setup
   useEffect(() => {
     const socket = initSocket();
@@ -52,14 +103,16 @@ export default function App() {
 
     socket.on(
       'ws:joined',
-      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count }) => {
+      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats }) => {
         store().setJoined(ordinal, color, streak, best);
         store().setSyncRequired(syncRequired);
         store().setUserCount(count);
+        if (city) store().setMyCity(city);
+        if (globalStats) store().setGlobalStats(globalStats);
       },
     );
 
-    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y, region }) => {
+    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y, region, city }) => {
       const d = dimensionsRef.current;
       const s = store();
 
@@ -72,6 +125,7 @@ export default function App() {
         t,
         ordinal,
         region,
+        city: city || '',
       });
       s.incrementPulsesReceived();
       s.updateActivityLevel(0.15);
@@ -82,31 +136,29 @@ export default function App() {
         if (region) s.setMyRegion(region);
       }
 
+      // Add to city ticker
+      if (city) {
+        s.addCityTick(city, color);
+      }
+
       playPulseHit(s.soundEnabled);
       haptic(30);
     });
 
-    socket.on('ws:burst', ({ streak, userIds, countries }) => {
+    socket.on('ws:burst', ({ streak, userIds, countries, cities, distanceKm, cityPair }) => {
       const s = store();
       s.updateStreak(streak, Math.max(streak, s.bestStreak));
 
-      // Resolve city names from synced users' pulses
-      const cities: string[] = [];
-      for (const uid of userIds) {
-        for (let i = s.pulses.length - 1; i >= 0; i--) {
-          if (s.pulses[i].userId === uid && s.pulses[i].region) {
-            const city = s.pulses[i].region.split(', ')[0];
-            if (city && !cities.includes(city)) cities.push(city);
-            break;
-          }
-        }
-      }
-
-      const syncEvent = { t: Date.now(), userIds, countries, cities, streak };
+      const syncEvent = { t: Date.now(), userIds, countries, cities: cities || [], streak };
       s.triggerBurst(syncEvent);
       s.setLastShareableSync(syncEvent);
-      s.updateCitySyncCounts(cities);
+      s.updateCitySyncCounts(cities || []);
       s.updateActivityLevel(0.4);
+
+      // Set sync distance if present
+      if (distanceKm && cityPair) {
+        s.setSyncDistance(distanceKm, cityPair);
+      }
 
       // Check if current user participated
       if (s.myUserId && userIds.includes(s.myUserId)) {
@@ -128,6 +180,7 @@ export default function App() {
     socket.on('ws:color-changed', () => {});
     socket.on('ws:error', ({ message }) => store().setError(message));
     socket.on('ws:feed', (entry: FeedEntry) => store().addFeedEntry(entry));
+    socket.on('ws:global-stats', (stats: GlobalStatsPayload) => store().setGlobalStats(stats));
 
     return () => {
       socket.off('connect');
@@ -140,6 +193,7 @@ export default function App() {
       socket.off('ws:color-changed');
       socket.off('ws:error');
       socket.off('ws:feed');
+      socket.off('ws:global-stats');
     };
   }, []);
 
@@ -155,6 +209,8 @@ export default function App() {
     if (socket) {
       socket.emit('ws:pulse', { x: nx, y: ny });
       useStore.getState().incrementPulsesSent();
+      lastInteractionRef.current = Date.now();
+      useStore.getState().setIsAutoPulsing(false);
     }
   }, []);
 
@@ -189,16 +245,6 @@ export default function App() {
         />
       )}
 
-      {showStats && (
-        <SessionStats
-          onClose={() => useStore.getState().setShowStats(false)}
-          onShare={() => {
-            useStore.getState().setShowStats(false);
-            useStore.getState().setShowShareCard(true);
-          }}
-        />
-      )}
-
       {showShareCard && lastShareableSync && (
         <ShareCard
           streak={lastShareableSync.streak}
@@ -207,9 +253,12 @@ export default function App() {
         />
       )}
 
+      <CityTicker />
+      <DataBar />
+
       {error && (
         <div
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30"
+          className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30"
           style={{
             paddingBottom:
               'max(0.5rem, env(safe-area-inset-bottom, 0.5rem))',

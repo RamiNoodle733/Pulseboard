@@ -8,12 +8,15 @@ import type {
   SocketData,
   User,
   WSStats,
+  GlobalStatsPayload,
 } from './types.js';
 import { config } from './env.js';
 import { checkPulseLimit, checkColorChangeCooldown } from './rateLimit.js';
 import { createStreakManager } from './streak.js';
 import { notifyDiscord } from './discord.js';
 import { resolveLocation, formatRegion } from './geo.js';
+import { createStatsManager } from './stats.js';
+import { haversineKm } from './haversine.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -31,6 +34,7 @@ function clamp01(v: number): number {
 export interface WSServer {
   io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
   getStats: () => WSStats;
+  shutdown: () => void;
 }
 
 export function createWSServer(httpServer: HTTPServer): WSServer {
@@ -49,9 +53,23 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   const users = new Map<string, User>();
   let userOrdinalCounter = 0;
   const streakManager = createStreakManager();
+  const statsManager = createStatsManager();
+  statsManager.startAutoSave();
 
   function connectedCount(): number {
     return io.sockets.sockets.size;
+  }
+
+  function buildGlobalStats(): GlobalStatsPayload {
+    const snapshot = statsManager.getSnapshot();
+    return {
+      totalPulses: snapshot.totalPulses,
+      totalSyncs: snapshot.totalSyncs,
+      bestStreakAllTime: snapshot.bestStreakAllTime,
+      activeCities: Object.keys(snapshot.cities).length,
+      topCities: statsManager.getTopCities(10),
+      pulsesPerMinute: statsManager.getPulsesPerMinute(),
+    };
   }
 
   // broadcast user count periodically
@@ -65,6 +83,11 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       io.emit('ws:streak-broken');
     }
   }, 500);
+
+  // broadcast global stats every 10 seconds
+  setInterval(() => {
+    io.emit('ws:global-stats', buildGlobalStats());
+  }, 10_000);
 
   io.on('connection', (socket) => {
     console.log(`[ws] socket connected: ${socket.id}`);
@@ -89,6 +112,9 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         ordinal: userOrdinalCounter,
         color,
         region,
+        city: geo.city,
+        lat: geo.lat,
+        lon: geo.lon,
         createdAt: Date.now(),
         lastPulse: 0,
         lastColorChange: Date.now(),
@@ -114,6 +140,8 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         bestStreak: streakManager.getBestStreak(),
         syncRequired: streakManager.getState(count).requiredUsers,
         userCount: count,
+        city: geo.city,
+        globalStats: buildGlobalStats(),
       });
 
       io.emit('ws:user-count', { count });
@@ -153,6 +181,8 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const px = clamp01(x);
       const py = clamp01(y);
 
+      statsManager.recordPulse(user.city, now);
+
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
 
@@ -164,6 +194,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         x: px,
         y: py,
         region: user.region,
+        city: user.city,
       });
 
       // feed entry for every pulse
@@ -182,21 +213,65 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       if (result.streakIncreased) {
         const streak = streakManager.getCurrentStreak();
 
-        // collect countries of synced users
+        // collect countries and cities of synced users
         const countries: string[] = [];
+        const cities: string[] = [];
+        const positions: Array<{ city: string; lat: number; lon: number }> = [];
+
         for (const uid of result.syncedUserIds) {
           const u = users.get(uid);
-          if (u && u.region) {
-            const cc = u.region.split(', ').pop() || '';
-            if (cc && !countries.includes(cc)) countries.push(cc);
+          if (u) {
+            if (u.region) {
+              const cc = u.region.split(', ').pop() || '';
+              if (cc && !countries.includes(cc)) countries.push(cc);
+            }
+            if (u.city && !cities.includes(u.city)) {
+              cities.push(u.city);
+              if (u.lat !== 0 || u.lon !== 0) {
+                positions.push({ city: u.city, lat: u.lat, lon: u.lon });
+              }
+            }
           }
         }
+
+        // calculate max haversine distance between any synced pair
+        let distanceKm: number | null = null;
+        let cityPair: string | null = null;
+
+        if (positions.length >= 2) {
+          let maxDist = 0;
+          let maxI = 0;
+          let maxJ = 1;
+          for (let i = 0; i < positions.length; i++) {
+            for (let j = i + 1; j < positions.length; j++) {
+              const d = haversineKm(
+                positions[i].lat, positions[i].lon,
+                positions[j].lat, positions[j].lon,
+              );
+              if (d > maxDist) {
+                maxDist = d;
+                maxI = i;
+                maxJ = j;
+              }
+            }
+          }
+          if (maxDist > 1) {
+            distanceKm = Math.round(maxDist);
+            cityPair = `${positions[maxI].city} \u2194 ${positions[maxJ].city}`;
+          }
+        }
+
+        // record in persistent stats
+        statsManager.recordSync(cities, streak);
 
         io.emit('ws:burst', {
           streak,
           contributors: result.contributors,
           countries,
           userIds: result.syncedUserIds,
+          cities,
+          distanceKm,
+          cityPair,
         });
 
         // sync feed entry
@@ -303,5 +378,5 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     };
   }
 
-  return { io, getStats };
+  return { io, getStats, shutdown: () => statsManager.shutdown() };
 }

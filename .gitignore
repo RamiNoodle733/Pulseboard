@@ -41,3 +41,6 @@ coverage/
 
 # Misc
 *.local
+
+# Persistent data
+data/

@@ -52,6 +52,7 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (previewMode) return;
+      if (e.clientY > height - 44) return;
       onPulse(e.clientX / width, e.clientY / height);
     },
     [width, height, onPulse, previewMode],
@@ -61,6 +62,7 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
     (e: React.TouchEvent<HTMLCanvasElement>) => {
       if (previewMode) return;
       if (e.touches.length === 0) return;
+      if (e.touches[0].clientY > height - 44) return;
       e.preventDefault();
       onPulse(e.touches[0].clientX / width, e.touches[0].clientY / height);
     },
