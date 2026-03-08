@@ -2,14 +2,19 @@ import { useStore } from '../store';
 
 interface HUDProps {
   onColorEdit: () => void;
+  onToggleProposals: () => void;
 }
 
-export default function HUD({ onColorEdit }: HUDProps) {
+export default function HUD({ onColorEdit, onToggleProposals }: HUDProps) {
   const myColor = useStore((s) => s.myColor);
   const userCount = useStore((s) => s.userCount);
   const connected = useStore((s) => s.connected);
   const soundEnabled = useStore((s) => s.soundEnabled);
   const toggleSound = useStore((s) => s.toggleSound);
+  const aiEnabled = useStore((s) => s.aiEnabled);
+  const proposals = useStore((s) => s.proposals);
+
+  const activeProposals = proposals.filter((p) => p.status === 'pr-created' || p.status === 'generating').length;
 
   return (
     <div
@@ -23,8 +28,24 @@ export default function HUD({ onColorEdit }: HUDProps) {
         style={{ backgroundColor: myColor }}
       />
 
-      {/* Right: mute, count, status */}
+      {/* Right: proposals, mute, count, status */}
       <div className="flex items-center gap-3 pointer-events-auto">
+        {aiEnabled && (
+          <button
+            onClick={onToggleProposals}
+            className="relative text-zinc-600 hover:text-zinc-400 transition-colors"
+            title="Proposals"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18h6" />
+              <path d="M10 22h4" />
+              <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+            </svg>
+            {activeProposals > 0 && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500" />
+            )}
+          </button>
+        )}
         <button
           onClick={toggleSound}
           className="text-zinc-600 hover:text-zinc-400 transition-colors"

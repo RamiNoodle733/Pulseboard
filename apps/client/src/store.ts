@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry, GlobalStatsPayload } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload } from './socket';
 
 export interface Pulse {
   id: string;
@@ -90,6 +90,14 @@ interface Store {
   showShareCard: boolean;
   lastShareableSync: SyncEvent | null;
 
+  // Proposals / AI
+  proposals: ProposalPayload[];
+  freePromptsRemaining: number;
+  freePromptsTotal: number;
+  paidEnabled: boolean;
+  aiEnabled: boolean;
+  showProposalFeed: boolean;
+
   // Actions
   setJoined: (ordinal: number, color: string, streak: number, bestStreak: number) => void;
   setConnected: (connected: boolean) => void;
@@ -119,6 +127,11 @@ interface Store {
   setSyncDistance: (km: number | null, pair: string | null) => void;
   addCityTick: (city: string, color: string) => void;
   setIsAutoPulsing: (v: boolean) => void;
+  setProposals: (proposals: ProposalPayload[]) => void;
+  upsertProposal: (proposal: ProposalPayload) => void;
+  setPromptInfo: (remaining: number, total: number, paidEnabled: boolean) => void;
+  setFreePromptsRemaining: (remaining: number) => void;
+  setShowProposalFeed: (show: boolean) => void;
 }
 
 const MAX_FEED = 30;
@@ -175,6 +188,13 @@ export const useStore = create<Store>((set) => ({
 
   showShareCard: false,
   lastShareableSync: null,
+
+  proposals: [],
+  freePromptsRemaining: 0,
+  freePromptsTotal: 0,
+  paidEnabled: false,
+  aiEnabled: false,
+  showProposalFeed: false,
 
   setJoined: (ordinal, color, streak, bestStreak) =>
     set({ joined: true, myOrdinal: ordinal, myColor: color, currentStreak: streak, bestStreak, sessionStartTime: Date.now() }),
@@ -289,4 +309,24 @@ export const useStore = create<Store>((set) => ({
     }),
 
   setIsAutoPulsing: (v) => set({ isAutoPulsing: v }),
+
+  setProposals: (proposals) => set({ proposals }),
+
+  upsertProposal: (proposal) =>
+    set((state) => {
+      const idx = state.proposals.findIndex((p) => p.id === proposal.id);
+      if (idx >= 0) {
+        const updated = [...state.proposals];
+        updated[idx] = proposal;
+        return { proposals: updated };
+      }
+      return { proposals: [proposal, ...state.proposals] };
+    }),
+
+  setPromptInfo: (remaining, total, paidEnabled) =>
+    set({ freePromptsRemaining: remaining, freePromptsTotal: total, paidEnabled, aiEnabled: true }),
+
+  setFreePromptsRemaining: (remaining) => set({ freePromptsRemaining: remaining }),
+
+  setShowProposalFeed: (show) => set({ showProposalFeed: show }),
 }));

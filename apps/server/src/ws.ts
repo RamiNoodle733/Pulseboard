@@ -11,12 +11,22 @@ import type {
   GlobalStatsPayload,
 } from './types.js';
 import { config } from './env.js';
-import { checkPulseLimit, checkColorChangeCooldown } from './rateLimit.js';
+import {
+  checkPulseLimit,
+  checkColorChangeCooldown,
+  checkPromptRateLimit,
+  checkFreePromptLimit,
+  consumeFreePrompt,
+  getFreePromptsRemaining,
+} from './rateLimit.js';
 import { createStreakManager } from './streak.js';
 import { notifyDiscord } from './discord.js';
 import { resolveLocation, formatRegion } from './geo.js';
 import { createStatsManager } from './stats.js';
 import { haversineKm } from './haversine.js';
+import { generateChanges } from './ai.js';
+import { createPR, mergePR, closePR } from './github.js';
+import { createProposalManager } from './proposals.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -29,6 +39,20 @@ function extractIp(socket: { handshake: { headers: Record<string, string | strin
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
+}
+
+async function verifyPaymentIntent(id: string): Promise<boolean> {
+  if (!config.stripeSecretKey) return false;
+  try {
+    const res = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${config.stripeSecretKey}` },
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { status: string; amount: number };
+    return data.status === 'succeeded' && data.amount === 25;
+  } catch {
+    return false;
+  }
 }
 
 export interface WSServer {
@@ -54,7 +78,9 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   let userOrdinalCounter = 0;
   const streakManager = createStreakManager();
   const statsManager = createStatsManager();
+  const proposalManager = createProposalManager();
   statsManager.startAutoSave();
+  proposalManager.startAutoSave();
 
   function connectedCount(): number {
     return io.sockets.sockets.size;
@@ -88,6 +114,19 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   setInterval(() => {
     io.emit('ws:global-stats', buildGlobalStats());
   }, 10_000);
+
+  // auto-close expired proposals every 60 seconds
+  setInterval(async () => {
+    const expired = proposalManager.getExpiredProposals(config.proposalTtlMs);
+    for (const p of expired) {
+      if (p.prNumber) {
+        await closePR(p.prNumber);
+      }
+      proposalManager.updateStatus(p.id, 'rejected', { resolvedAt: Date.now() });
+      const payload = proposalManager.getPayload(p.id, '');
+      if (payload) io.emit('ws:proposal-update', payload);
+    }
+  }, 60_000);
 
   io.on('connection', (socket) => {
     console.log(`[ws] socket connected: ${socket.id}`);
@@ -145,6 +184,19 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       });
 
       io.emit('ws:user-count', { count });
+
+      // Send AI feature info
+      const aiEnabled = !!(config.anthropicApiKey && config.githubToken);
+      socket.emit('ws:prompt-info', {
+        freePromptsRemaining: getFreePromptsRemaining(ip),
+        freePromptsTotal: config.promptFreeLimit,
+        paidEnabled: !!config.stripeSecretKey,
+      });
+      if (aiEnabled) {
+        socket.emit('ws:proposals', {
+          proposals: proposalManager.getActivePayloads(userId),
+        });
+      }
 
       notifyDiscord('user_join', {
         ordinal: userOrdinalCounter,
@@ -342,6 +394,173 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       });
     });
 
+    socket.on('ws:submit-prompt', async ({ prompt, paymentIntentId }) => {
+      const userId = socket.data.userId;
+      if (!userId) {
+        socket.emit('ws:error', { message: 'Not authenticated' });
+        return;
+      }
+
+      if (!config.anthropicApiKey || !config.githubToken || !config.githubOwner || !config.githubRepo) {
+        socket.emit('ws:error', { message: 'AI features not configured' });
+        return;
+      }
+
+      const trimmed = prompt.trim();
+      if (!trimmed || trimmed.length < 5 || trimmed.length > 500) {
+        socket.emit('ws:error', { message: 'Prompt must be 5-500 characters' });
+        return;
+      }
+
+      const allowed = await checkPromptRateLimit(userId);
+      if (!allowed) {
+        socket.emit('ws:error', { message: 'Too many prompts, slow down' });
+        return;
+      }
+
+      const user = users.get(userId);
+      if (!user) {
+        socket.emit('ws:error', { message: 'User not found' });
+        return;
+      }
+
+      const ip = user.ip;
+
+      if (paymentIntentId && config.stripeSecretKey) {
+        const valid = await verifyPaymentIntent(paymentIntentId);
+        if (!valid) {
+          socket.emit('ws:error', { message: 'Payment verification failed' });
+          return;
+        }
+      } else {
+        const freeCheck = checkFreePromptLimit(ip);
+        if (!freeCheck.allowed) {
+          socket.emit('ws:error', { message: 'Daily free prompt used. Pay $0.25 for more.' });
+          return;
+        }
+        consumeFreePrompt(ip);
+      }
+
+      const proposalId = nanoid(10);
+      proposalManager.createProposal(proposalId, trimmed, userId, user.ordinal);
+
+      socket.emit('ws:prompt-ack', {
+        proposalId,
+        freePromptsRemaining: getFreePromptsRemaining(ip),
+      });
+
+      io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+
+      try {
+        proposalManager.updateStatus(proposalId, 'generating');
+        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+
+        console.log(`[ai] generating changes for proposal ${proposalId}: "${trimmed}"`);
+        const result = await generateChanges(trimmed);
+
+        if (result.changes.length === 0) {
+          proposalManager.updateStatus(proposalId, 'failed', {
+            error: result.reasoning || 'No changes generated',
+          });
+          io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+          return;
+        }
+
+        const prBody = [
+          `## User Prompt`,
+          `> ${trimmed}`,
+          '',
+          `## AI Reasoning`,
+          result.reasoning,
+          '',
+          `## Changed Files`,
+          ...result.changes.map((c) => `- \`${c.path}\``),
+          '',
+          `---`,
+          `Proposed by User${user.ordinal} via Pulseboard AI`,
+        ].join('\n');
+
+        const pr = await createPR(
+          result.changes,
+          `[AI] ${result.summary}`,
+          prBody,
+          proposalId,
+        );
+
+        proposalManager.updateStatus(proposalId, 'pr-created', {
+          summary: result.summary,
+          reasoning: result.reasoning,
+          changedFiles: result.changes.map((c) => c.path),
+          prNumber: pr.prNumber,
+          prUrl: pr.prUrl,
+          branchName: pr.branchName,
+        });
+
+        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+        console.log(`[ai] proposal ${proposalId} -> PR #${pr.prNumber}`);
+      } catch (err) {
+        console.error(`[ai] proposal ${proposalId} failed:`, err);
+        proposalManager.updateStatus(proposalId, 'failed', {
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+      }
+    });
+
+    socket.on('ws:vote', async ({ proposalId, direction }) => {
+      const userId = socket.data.userId;
+      if (!userId) {
+        socket.emit('ws:error', { message: 'Not authenticated' });
+        return;
+      }
+
+      if (direction !== 'up' && direction !== 'down') {
+        socket.emit('ws:error', { message: 'Invalid vote' });
+        return;
+      }
+
+      const result = proposalManager.vote(proposalId, userId, direction);
+      if (!result) {
+        socket.emit('ws:error', { message: 'Proposal not found or not votable' });
+        return;
+      }
+
+      io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+
+      const count = connectedCount();
+
+      if (proposalManager.shouldMerge(proposalId, count)) {
+        try {
+          const payload = proposalManager.getPayload(proposalId, '')!;
+          if (payload.prUrl) {
+            const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+            if (prNum > 0) {
+              await mergePR(prNum);
+              proposalManager.updateStatus(proposalId, 'merged', { resolvedAt: Date.now() });
+              io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+              console.log(`[ai] proposal ${proposalId} merged via community vote`);
+            }
+          }
+        } catch (err) {
+          console.error(`[ai] merge failed for ${proposalId}:`, err);
+        }
+      } else if (proposalManager.shouldReject(proposalId, count)) {
+        try {
+          const payload = proposalManager.getPayload(proposalId, '')!;
+          if (payload.prUrl) {
+            const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+            if (prNum > 0) {
+              await closePR(prNum);
+            }
+          }
+          proposalManager.updateStatus(proposalId, 'rejected', { resolvedAt: Date.now() });
+          io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+        } catch (err) {
+          console.error(`[ai] reject failed for ${proposalId}:`, err);
+        }
+      }
+    });
+
     socket.on('disconnect', () => {
       const userId = socket.data.userId;
       if (userId) {
@@ -378,5 +597,5 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     };
   }
 
-  return { io, getStats, shutdown: () => statsManager.shutdown() };
+  return { io, getStats, shutdown: () => { statsManager.shutdown(); proposalManager.shutdown(); } };
 }

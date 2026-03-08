@@ -33,6 +33,31 @@ export interface FeedEntry {
   countries?: string[];
 }
 
+export type ProposalStatus =
+  | 'submitted'
+  | 'generating'
+  | 'pr-created'
+  | 'merged'
+  | 'rejected'
+  | 'failed';
+
+export interface ProposalPayload {
+  id: string;
+  prompt: string;
+  submittedByOrdinal: number;
+  submittedAt: number;
+  status: ProposalStatus;
+  summary: string | null;
+  reasoning: string | null;
+  changedFiles: string[];
+  prUrl: string | null;
+  upvoteCount: number;
+  downvoteCount: number;
+  myVote: 'up' | 'down' | null;
+  resolvedAt: number | null;
+  error: string | null;
+}
+
 export interface ServerToClientEvents {
   'ws:joined': (data: {
     ordinal: number;
@@ -73,12 +98,18 @@ export interface ServerToClientEvents {
   'ws:error': (data: { message: string }) => void;
   'ws:feed': (data: FeedEntry) => void;
   'ws:global-stats': (data: GlobalStatsPayload) => void;
+  'ws:proposals': (data: { proposals: ProposalPayload[] }) => void;
+  'ws:proposal-update': (data: ProposalPayload) => void;
+  'ws:prompt-ack': (data: { proposalId: string; freePromptsRemaining: number }) => void;
+  'ws:prompt-info': (data: { freePromptsRemaining: number; freePromptsTotal: number; paidEnabled: boolean }) => void;
 }
 
 export interface ClientToServerEvents {
   'ws:join': (data: { color: string; userAgent?: string }) => void;
   'ws:pulse': (data: { x: number; y: number }) => void;
   'ws:change-color': (data: { color: string }) => void;
+  'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
+  'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;
 }
 
 export interface InterServerEvents {}

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket } from './socket';
-import type { FeedEntry, GlobalStatsPayload } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import Onboarding from './components/Onboarding';
@@ -10,6 +10,8 @@ import ColorEditor from './components/ColorEditor';
 import ShareCard from './components/ShareCard';
 import DataBar from './components/DataBar';
 import CityTicker from './components/CityTicker';
+import PromptBar from './components/PromptBar';
+import ProposalFeed from './components/ProposalFeed';
 import { playPulseHit, playBurstHit, haptic } from './audio';
 
 const AUTO_PULSE_IDLE_THRESHOLD = 5000; // 5s idle before auto-pulse
@@ -182,6 +184,14 @@ export default function App() {
     socket.on('ws:feed', (entry: FeedEntry) => store().addFeedEntry(entry));
     socket.on('ws:global-stats', (stats: GlobalStatsPayload) => store().setGlobalStats(stats));
 
+    // Proposal events
+    socket.on('ws:proposals', ({ proposals }) => store().setProposals(proposals));
+    socket.on('ws:proposal-update', (proposal: ProposalPayload) => store().upsertProposal(proposal));
+    socket.on('ws:prompt-ack', ({ freePromptsRemaining }) => store().setFreePromptsRemaining(freePromptsRemaining));
+    socket.on('ws:prompt-info', ({ freePromptsRemaining, freePromptsTotal, paidEnabled }) =>
+      store().setPromptInfo(freePromptsRemaining, freePromptsTotal, paidEnabled),
+    );
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -194,6 +204,10 @@ export default function App() {
       socket.off('ws:error');
       socket.off('ws:feed');
       socket.off('ws:global-stats');
+      socket.off('ws:proposals');
+      socket.off('ws:proposal-update');
+      socket.off('ws:prompt-ack');
+      socket.off('ws:prompt-info');
     };
   }, []);
 
@@ -212,6 +226,11 @@ export default function App() {
       lastInteractionRef.current = Date.now();
       useStore.getState().setIsAutoPulsing(false);
     }
+  }, []);
+
+  const handleToggleProposals = useCallback(() => {
+    const s = useStore.getState();
+    s.setShowProposalFeed(!s.showProposalFeed);
   }, []);
 
   if (!joined) {
@@ -235,7 +254,10 @@ export default function App() {
         onPulse={handleCanvasClick}
       />
 
-      <HUD onColorEdit={() => setShowColorEditor(!showColorEditor)} />
+      <HUD
+        onColorEdit={() => setShowColorEditor(!showColorEditor)}
+        onToggleProposals={handleToggleProposals}
+      />
       <StreakDisplay />
 
       {showColorEditor && (
@@ -253,6 +275,8 @@ export default function App() {
         />
       )}
 
+      <PromptBar />
+      <ProposalFeed />
       <CityTicker />
       <DataBar />
 
