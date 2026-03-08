@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { initSocket, getSocket } from './socket';
+import { initSocket, getSocket, FeedEntry } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import ColorPicker from './ColorPicker';
@@ -21,31 +21,37 @@ function playPulseSound(color: string) {
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-    const freq = 200 + (parseInt(color.slice(1, 3), 16) / 255) * 400;
+    const freq = 220 + (parseInt(color.slice(1, 3), 16) / 255) * 330;
     osc.frequency.setValueAtTime(freq, ctx.currentTime);
     osc.type = 'sine';
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.06, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
     osc.start();
-    osc.stop(ctx.currentTime + 0.15);
+    osc.stop(ctx.currentTime + 0.12);
   } catch { /* audio not available */ }
 }
 
-function playBurstSound() {
+function playBurstSound(streak: number) {
   if (!useStore.getState().soundEnabled) return;
   try {
     const ctx = getAudioCtx();
-    [300, 450, 600].forEach((freq, i) => {
+    // richer harmonics at higher streaks
+    const baseFreqs = [260, 330, 390];
+    const extra = Math.min(streak, 10);
+    if (extra > 3) baseFreqs.push(520);
+    if (extra > 6) baseFreqs.push(660);
+
+    baseFreqs.forEach((freq, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.05);
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.03);
       osc.type = 'sine';
-      gain.gain.setValueAtTime(0.06, ctx.currentTime + i * 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3 + i * 0.05);
-      osc.start(ctx.currentTime + i * 0.05);
-      osc.stop(ctx.currentTime + 0.3 + i * 0.05);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime + i * 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4 + i * 0.03);
+      osc.start(ctx.currentTime + i * 0.03);
+      osc.stop(ctx.currentTime + 0.4 + i * 0.03);
     });
   } catch { /* audio not available */ }
 }
@@ -54,37 +60,50 @@ function haptic(pattern: number | number[]) {
   if (navigator.vibrate) navigator.vibrate(pattern);
 }
 
-// ---- sync indicator ----
+// ---- feed ----
 
-function SyncIndicator() {
-  const syncWindowEnd = useStore((s) => s.syncWindowEnd);
-  const syncContributors = useStore((s) => s.syncContributors);
-  const syncRequired = useStore((s) => s.syncRequired);
-  const [remaining, setRemaining] = useState(0);
+function timeAgo(t: number): string {
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 2) return 'now';
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m`;
+}
 
+function Feed() {
+  const entries = useStore((s) => s.feedEntries);
+  const [, setTick] = useState(0);
+
+  // re-render every second to update relative times
   useEffect(() => {
-    if (!syncWindowEnd) return;
-    let raf: number;
-    const tick = () => {
-      const ms = Math.max(0, syncWindowEnd - Date.now());
-      setRemaining(ms);
-      if (ms > 0) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [syncWindowEnd]);
+    const iv = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
 
-  if (!syncWindowEnd || syncContributors === 0) return null;
-
-  const progress = syncRequired > 0 ? Math.min(syncContributors / syncRequired, 1) : 0;
-  const barLen = 10;
-  const filled = Math.round(progress * barLen);
-  const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(barLen - filled);
-  const synced = syncContributors >= syncRequired;
+  if (entries.length === 0) return null;
 
   return (
-    <div className={`text-xs font-mono transition-colors ${synced ? 'text-terminal-green text-glow' : 'text-zinc-500'}`}>
-      SYNC [{syncContributors}/{syncRequired}] {bar} {remaining > 0 ? `${remaining}ms` : ''}
+    <div className="absolute bottom-0 left-0 right-0 pointer-events-none" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0.75rem))' }}>
+      <div className="mx-3 max-h-32 overflow-hidden flex flex-col-reverse">
+        {entries.slice(0, 8).map((e, i) => (
+          <div key={`${e.t}-${i}`} className="flex items-center gap-2 py-0.5 text-[11px]">
+            {e.type === 'sync' ? (
+              <span className="text-zinc-300">
+                <span className="text-amber-400 mr-1">sync</span>
+                {e.countries && e.countries.length > 0 ? e.countries.join(', ') : ''}{e.streak ? ` · streak ${e.streak}` : ''}
+              </span>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: e.color }} />
+                <span className="text-zinc-500">
+                  user{e.ordinal}
+                  {e.region ? ` · ${e.region}` : ''}
+                </span>
+              </>
+            )}
+            <span className="text-zinc-700 ml-auto flex-shrink-0">{timeAgo(e.t)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -104,25 +123,25 @@ function ColorEditor({ currentColor, onClose }: { currentColor: string; onClose:
   };
 
   return (
-    <div className="absolute top-12 left-4 z-50 panel p-3 flex items-center gap-2">
+    <div className="absolute top-12 left-4 z-50 bg-surface-raised border border-zinc-800 rounded-lg p-3 flex items-center gap-2">
       <input
         type="color"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        className="w-6 h-6 cursor-pointer bg-transparent border-0 p-0"
+        className="w-7 h-7 rounded cursor-pointer bg-transparent border-0 p-0"
       />
       <input
         type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        className="w-20 px-2 py-1 bg-transparent border border-zinc-800 text-zinc-300 text-xs font-mono focus:border-zinc-600 focus:outline-none"
+        className="w-20 px-2 py-1 bg-white/5 border border-zinc-800 rounded text-zinc-300 text-xs focus:border-zinc-600 focus:outline-none"
         spellCheck={false}
       />
-      <button onClick={apply} className="px-2 py-1 border border-zinc-700 text-zinc-400 text-xs hover:text-zinc-200 hover:border-zinc-500 transition-colors">
-        apply
+      <button onClick={apply} className="px-2.5 py-1 bg-white/10 rounded text-zinc-300 text-xs hover:bg-white/20 transition-colors">
+        Apply
       </button>
-      <button onClick={onClose} className="text-zinc-600 text-xs hover:text-zinc-400 transition-colors">
-        x
+      <button onClick={onClose} className="text-zinc-600 text-xs hover:text-zinc-400 transition-colors ml-1">
+        &times;
       </button>
     </div>
   );
@@ -156,8 +175,8 @@ export default function App() {
     updateStreak,
     triggerBurst,
     setError,
-    setSyncState,
     setSyncRequired,
+    addFeedEntry,
     toggleSound,
   } = useStore();
 
@@ -175,12 +194,13 @@ export default function App() {
     socket.on('connect', () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
 
-    socket.on('ws:joined', ({ ordinal, color, streak, bestStreak: best, syncRequired }) => {
+    socket.on('ws:joined', ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count }) => {
       setJoined(ordinal, color, streak, best);
       setSyncRequired(syncRequired);
+      setUserCount(count);
     });
 
-    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y }) => {
+    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y, region }) => {
       const d = dimensionsRef.current;
       addPulse({
         id: `${userId}-${t}`,
@@ -190,15 +210,16 @@ export default function App() {
         y: y * d.height,
         t,
         ordinal,
+        region,
       });
       playPulseSound(color);
       haptic(30);
     });
 
-    socket.on('ws:burst', ({ streak }) => {
+    socket.on('ws:burst', ({ streak, userIds, countries }) => {
       updateStreak(streak, Math.max(streak, useStore.getState().bestStreak));
-      triggerBurst();
-      playBurstSound();
+      triggerBurst({ t: Date.now(), userIds, countries, streak });
+      playBurstSound(streak);
       haptic([50, 30, 80]);
     });
 
@@ -210,16 +231,14 @@ export default function App() {
       setUserCount(count);
     });
 
-    socket.on('ws:sync-state', ({ windowEnd, contributors, required }) => {
-      setSyncState(windowEnd, contributors, required);
-    });
-
-    socket.on('ws:color-changed', () => {
-      // color changes are handled optimistically in ColorEditor
-    });
+    socket.on('ws:color-changed', () => {});
 
     socket.on('ws:error', ({ message }) => {
       setError(message);
+    });
+
+    socket.on('ws:feed', (entry: FeedEntry) => {
+      addFeedEntry(entry);
     });
 
     return () => {
@@ -230,9 +249,9 @@ export default function App() {
       socket.off('ws:burst');
       socket.off('ws:streak-broken');
       socket.off('ws:user-count');
-      socket.off('ws:sync-state');
       socket.off('ws:color-changed');
       socket.off('ws:error');
+      socket.off('ws:feed');
     };
   }, []);
 
@@ -243,51 +262,47 @@ export default function App() {
     }
   }, []);
 
-  const handlePulse = useCallback(() => {
+  const handleCanvasClick = useCallback((nx: number, ny: number) => {
     const socket = getSocket();
     if (socket) {
-      socket.emit('ws:pulse');
+      socket.emit('ws:pulse', { x: nx, y: ny });
     }
   }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && joined) {
-        e.preventDefault();
-        handlePulse();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [joined, handlePulse]);
 
   if (!joined) {
     return <ColorPicker onColorSelected={handleColorSelected} />;
   }
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-surface scanlines" style={{ touchAction: 'manipulation' }}>
-      <Canvas width={dimensions.width} height={dimensions.height} />
+    <div className="relative w-full h-full overflow-hidden bg-surface" style={{ touchAction: 'manipulation' }}>
+      <Canvas
+        width={dimensions.width}
+        height={dimensions.height}
+        onPulse={handleCanvasClick}
+      />
 
       {/* top bar */}
-      <div className="absolute top-0 left-0 right-0 px-4 py-3 flex items-center justify-between text-xs">
-        <button
-          onClick={() => setShowColorEditor(!showColorEditor)}
-          className="flex items-center gap-2 hover:text-zinc-100 transition-colors"
-        >
-          <span className="w-3 h-3 inline-block" style={{ backgroundColor: myColor }} />
-          <span className="text-zinc-400">[user{myOrdinal}]</span>
-        </button>
+      <div className="absolute top-0 left-0 right-0 px-4 py-3 flex items-center justify-between text-xs pointer-events-none">
+        <div className="pointer-events-auto">
+          <button
+            onClick={() => setShowColorEditor(!showColorEditor)}
+            className="flex items-center gap-2 text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: myColor }} />
+            <span>user{myOrdinal}</span>
+          </button>
+        </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 pointer-events-auto">
           <button
             onClick={toggleSound}
             className="text-zinc-600 hover:text-zinc-400 transition-colors"
+            title={soundEnabled ? 'Mute' : 'Unmute'}
           >
-            [{soundEnabled ? 'SND' : 'MUTE'}]
+            {soundEnabled ? '\u266A' : '\u266A'}
           </button>
-          <span className="text-zinc-600">online: <span className="text-zinc-400">{userCount}</span></span>
-          <span className={`status-dot ${connected ? 'status-dot--online' : 'status-dot--offline'}`} />
+          <span className="text-zinc-600">{userCount} online</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
         </div>
       </div>
 
@@ -295,51 +310,33 @@ export default function App() {
         <ColorEditor currentColor={myColor} onClose={() => setShowColorEditor(false)} />
       )}
 
-      {/* center streak */}
+      {/* streak counter */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none">
-        <div className={`text-7xl sm:text-8xl font-bold mb-1 tabular-nums ${currentStreak > 0 ? 'text-terminal-green text-glow' : 'text-zinc-800'}`}>
-          {String(currentStreak).padStart(3, '0')}
+        <div
+          className="text-7xl sm:text-8xl font-bold tabular-nums transition-all duration-300"
+          style={{
+            color: currentStreak > 0 ? `rgba(255, 255, 255, ${Math.min(0.15 + currentStreak * 0.05, 0.6)})` : 'rgba(255, 255, 255, 0.04)',
+            textShadow: currentStreak > 0 ? `0 0 ${Math.min(20 + currentStreak * 3, 60)}px rgba(255, 255, 255, ${Math.min(0.1 + currentStreak * 0.02, 0.3)})` : 'none',
+          }}
+        >
+          {currentStreak}
         </div>
-        <div className="text-zinc-600 text-xs uppercase tracking-widest">current streak</div>
-        {bestStreak > 0 && (
-          <div className="text-zinc-700 text-[10px] mt-1">best: {bestStreak}</div>
+        {currentStreak > 0 && (
+          <div className="text-zinc-600 text-xs mt-1">streak</div>
+        )}
+        {bestStreak > 0 && bestStreak !== currentStreak && (
+          <div className="text-zinc-700 text-[10px] mt-0.5">best: {bestStreak}</div>
         )}
       </div>
 
-      {/* bottom area */}
-      <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center gap-3" style={{ paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 2rem))' }}>
-        <SyncIndicator />
-
-        <button
-          onClick={handlePulse}
-          className="w-20 h-20 sm:w-24 sm:h-24 border-2 font-bold text-sm uppercase tracking-wider transition-all hover:scale-105 active:scale-95 cursor-pointer"
-          style={{
-            borderColor: myColor,
-            color: myColor,
-            boxShadow: `0 0 30px ${myColor}30`,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${myColor}15`; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-        >
-          pulse
-        </button>
-
-        <p className="text-zinc-700 text-[10px]">[SPACE] or tap</p>
-      </div>
+      <Feed />
 
       {/* error toast */}
       {error && (
         <div className="absolute bottom-36 left-1/2 -translate-x-1/2">
-          <span className="text-terminal-red text-xs">[error] {error}</span>
-        </div>
-      )}
-
-      {/* instructions */}
-      {currentStreak === 0 && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 max-w-sm">
-          <p className="text-zinc-600 text-[10px] text-center">
-            {'> '}sync with <span className="text-zinc-400">{useStore.getState().syncRequired}+ users</span> within 600ms to build the streak
-          </p>
+          <span className="text-red-400/80 text-xs bg-surface-raised/90 px-3 py-1.5 rounded-full border border-zinc-800">
+            {error}
+          </span>
         </div>
       )}
     </div>

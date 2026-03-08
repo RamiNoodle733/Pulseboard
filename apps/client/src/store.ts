@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { FeedEntry } from './socket';
 
 export interface Pulse {
   id: string;
@@ -8,49 +9,47 @@ export interface Pulse {
   y: number;
   t: number;
   ordinal: number;
+  region: string;
+}
+
+export interface SyncEvent {
+  t: number;
+  userIds: string[];
+  countries: string[];
+  streak: number;
 }
 
 interface Store {
-  // user state
   joined: boolean;
   myColor: string;
   myOrdinal: number | null;
-
-  // streak state
   currentStreak: number;
   bestStreak: number;
-
-  // sync window state
-  syncWindowEnd: number;
-  syncContributors: number;
   syncRequired: number;
-
-  // connection state
   connected: boolean;
   userCount: number;
-
-  // pulses
   pulses: Pulse[];
-
-  // ui state
+  feedEntries: FeedEntry[];
+  lastSync: SyncEvent | null;
   error: string | null;
   showingBurst: boolean;
   soundEnabled: boolean;
 
-  // actions
   setJoined: (ordinal: number, color: string, streak: number, bestStreak: number) => void;
   setConnected: (connected: boolean) => void;
   setUserCount: (count: number) => void;
   addPulse: (pulse: Pulse) => void;
   updateStreak: (streak: number, bestStreak?: number) => void;
-  triggerBurst: () => void;
+  triggerBurst: (sync: SyncEvent) => void;
   setError: (error: string | null) => void;
   clearOldPulses: () => void;
-  setSyncState: (windowEnd: number, contributors: number, required: number) => void;
   setSyncRequired: (required: number) => void;
   setMyColor: (color: string) => void;
+  addFeedEntry: (entry: FeedEntry) => void;
   toggleSound: () => void;
 }
+
+const MAX_FEED = 30;
 
 export const useStore = create<Store>((set) => ({
   joined: false,
@@ -58,12 +57,12 @@ export const useStore = create<Store>((set) => ({
   myOrdinal: null,
   currentStreak: 0,
   bestStreak: 0,
-  syncWindowEnd: 0,
-  syncContributors: 0,
   syncRequired: 2,
   connected: false,
   userCount: 0,
   pulses: [],
+  feedEntries: [],
+  lastSync: null,
   error: null,
   showingBurst: false,
   soundEnabled: localStorage.getItem('pulseboard:sound') === 'true',
@@ -84,9 +83,9 @@ export const useStore = create<Store>((set) => ({
       bestStreak: bestStreak !== undefined ? bestStreak : state.bestStreak,
     })),
 
-  triggerBurst: () => {
-    set({ showingBurst: true });
-    setTimeout(() => set({ showingBurst: false }), 600);
+  triggerBurst: (sync) => {
+    set({ showingBurst: true, lastSync: sync });
+    setTimeout(() => set({ showingBurst: false }), 1500);
   },
 
   setError: (error) => {
@@ -101,12 +100,14 @@ export const useStore = create<Store>((set) => ({
       pulses: state.pulses.filter((p) => Date.now() - p.t < 3000),
     })),
 
-  setSyncState: (windowEnd, contributors, required) =>
-    set({ syncWindowEnd: windowEnd, syncContributors: contributors, syncRequired: required }),
-
   setSyncRequired: (required) => set({ syncRequired: required }),
 
   setMyColor: (color) => set({ myColor: color }),
+
+  addFeedEntry: (entry) =>
+    set((state) => ({
+      feedEntries: [entry, ...state.feedEntries].slice(0, MAX_FEED),
+    })),
 
   toggleSound: () =>
     set((state) => {

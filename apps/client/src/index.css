@@ -11,7 +11,7 @@
     @apply bg-surface text-zinc-300;
     margin: 0;
     overflow: hidden;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -21,50 +21,12 @@
   }
 
   ::selection {
-    background: rgba(0, 255, 65, 0.2);
-    color: #00ff41;
-  }
-}
-
-@layer components {
-  .panel {
-    @apply bg-surface-raised border border-zinc-800;
-  }
-
-  .scanlines::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0, 0, 0, 0.03) 2px,
-      rgba(0, 0, 0, 0.03) 4px
-    );
-    pointer-events: none;
-    z-index: 9999;
-  }
-
-  .status-dot {
-    @apply w-2 h-2 rounded-full;
-  }
-
-  .status-dot--online {
-    @apply bg-terminal-green;
-    box-shadow: 0 0 4px #00ff41;
-  }
-
-  .status-dot--offline {
-    @apply bg-red-500;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
   }
 }
 
 @layer utilities {
-  .text-glow {
-    text-shadow: 0 0 8px currentColor;
-  }
-
   .glow-pulse {
     animation: glow-pulse 2s ease-in-out infinite;
   }

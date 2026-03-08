@@ -13,6 +13,7 @@ import { config } from './env.js';
 import { checkPulseLimit, checkColorChangeCooldown } from './rateLimit.js';
 import { createStreakManager } from './streak.js';
 import { notifyDiscord } from './discord.js';
+import { resolveLocation, formatRegion } from './geo.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -21,6 +22,10 @@ function extractIp(socket: { handshake: { headers: Record<string, string | strin
   if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
   if (Array.isArray(forwarded) && forwarded.length > 0) return forwarded[0];
   return socket.handshake.address;
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
 }
 
 export interface WSServer {
@@ -54,12 +59,19 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     io.emit('ws:user-count', { count: connectedCount() });
   }, 5000);
 
+  // check for streak inactivity break every 500ms
+  setInterval(() => {
+    if (streakManager.checkInactivity()) {
+      io.emit('ws:streak-broken');
+    }
+  }, 500);
+
   io.on('connection', (socket) => {
     console.log(`[ws] socket connected: ${socket.id}`);
 
-    socket.on('ws:join', ({ color, userAgent }) => {
+    socket.on('ws:join', async ({ color, userAgent }) => {
       if (!HEX_COLOR.test(color)) {
-        socket.emit('ws:error', { message: 'invalid color format' });
+        socket.emit('ws:error', { message: 'Invalid color format' });
         return;
       }
 
@@ -68,10 +80,15 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const ip = extractIp(socket);
       const ua = userAgent || 'unknown';
 
+      // resolve geo (non-blocking, defaults to empty)
+      const geo = await resolveLocation(ip);
+      const region = formatRegion(geo);
+
       const user: User = {
         id: userId,
         ordinal: userOrdinalCounter,
         color,
+        region,
         createdAt: Date.now(),
         lastPulse: 0,
         lastColorChange: Date.now(),
@@ -86,7 +103,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       socket.data.color = color;
       socket.data.userAgent = ua;
 
-      console.log(`[user] User${userOrdinalCounter} joined with ${color}`);
+      console.log(`[user] User${userOrdinalCounter} joined with ${color} from ${region || 'unknown'}`);
 
       const count = connectedCount();
 
@@ -95,7 +112,8 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         color,
         streak: streakManager.getCurrentStreak(),
         bestStreak: streakManager.getBestStreak(),
-        syncRequired: streakManager.getWindowState(count).required,
+        syncRequired: streakManager.getState(count).requiredUsers,
+        userCount: count,
       });
 
       io.emit('ws:user-count', { count });
@@ -106,60 +124,90 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         ip,
         userAgent: ua,
         userCount: count,
+        extra: region ? { location: region } : undefined,
       });
     });
 
-    socket.on('ws:pulse', async () => {
+    socket.on('ws:pulse', async ({ x, y }) => {
       const userId = socket.data.userId;
       if (!userId) {
-        socket.emit('ws:error', { message: 'not authenticated' });
+        socket.emit('ws:error', { message: 'Not authenticated' });
         return;
       }
 
       const user = users.get(userId);
       if (!user) {
-        socket.emit('ws:error', { message: 'user not found' });
+        socket.emit('ws:error', { message: 'User not found' });
         return;
       }
 
       const allowed = await checkPulseLimit(userId);
       if (!allowed) {
-        socket.emit('ws:error', { message: 'rate limited. slow down.' });
+        socket.emit('ws:error', { message: 'Slow down' });
         return;
       }
 
       const now = Date.now();
       user.lastPulse = now;
 
+      const px = clamp01(x);
+      const py = clamp01(y);
+
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
-
-      // server-generated positions so all clients see the same layout
-      const x = Math.random();
-      const y = Math.random();
 
       io.emit('ws:pulse', {
         userId,
         color: user.color,
         t: now,
         ordinal: user.ordinal,
-        x,
-        y,
+        x: px,
+        y: py,
+        region: user.region,
       });
 
-      // broadcast sync window state after every pulse
-      const windowState = streakManager.getWindowState(count);
-      io.emit('ws:sync-state', {
-        windowEnd: windowState.windowEnd,
-        contributors: windowState.contributors,
-        required: windowState.required,
+      // feed entry for every pulse
+      io.emit('ws:feed', {
+        type: 'pulse',
+        ordinal: user.ordinal,
+        color: user.color,
+        region: user.region,
+        t: now,
       });
+
+      if (result.streakBroken) {
+        io.emit('ws:streak-broken');
+      }
 
       if (result.streakIncreased) {
         const streak = streakManager.getCurrentStreak();
+
+        // collect countries of synced users
+        const countries: string[] = [];
+        for (const uid of result.syncedUserIds) {
+          const u = users.get(uid);
+          if (u && u.region) {
+            const cc = u.region.split(', ').pop() || '';
+            if (cc && !countries.includes(cc)) countries.push(cc);
+          }
+        }
+
         io.emit('ws:burst', {
           streak,
           contributors: result.contributors,
+          countries,
+          userIds: result.syncedUserIds,
+        });
+
+        // sync feed entry
+        io.emit('ws:feed', {
+          type: 'sync',
+          ordinal: user.ordinal,
+          color: user.color,
+          region: user.region,
+          t: now,
+          streak,
+          countries,
         });
 
         if (streak % 5 === 0 || streak === streakManager.getBestStreak()) {
@@ -176,27 +224,23 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
           );
         }
       }
-
-      if (result.streakBroken) {
-        io.emit('ws:streak-broken');
-      }
     });
 
     socket.on('ws:change-color', ({ color }) => {
       const userId = socket.data.userId;
       if (!userId) {
-        socket.emit('ws:error', { message: 'not authenticated' });
+        socket.emit('ws:error', { message: 'Not authenticated' });
         return;
       }
 
       const user = users.get(userId);
       if (!user) {
-        socket.emit('ws:error', { message: 'user not found' });
+        socket.emit('ws:error', { message: 'User not found' });
         return;
       }
 
       if (!HEX_COLOR.test(color)) {
-        socket.emit('ws:error', { message: 'invalid color format' });
+        socket.emit('ws:error', { message: 'Invalid color format' });
         return;
       }
 
@@ -205,7 +249,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
           (config.colorChangeCooldown * 1000 - (Date.now() - user.lastColorChange)) / 1000,
         );
         socket.emit('ws:error', {
-          message: `color change on cooldown. wait ${remaining}s`,
+          message: `Color change on cooldown. Wait ${remaining}s`,
         });
         return;
       }
