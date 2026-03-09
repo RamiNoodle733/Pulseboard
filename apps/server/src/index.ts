@@ -43,7 +43,7 @@ async function start() {
 
   fastify.get('/ai/status', async () => {
     return {
-      enabled: !!(config.anthropicApiKey && config.githubToken),
+      enabled: !!(config.openaiApiKey && config.githubToken),
       paidEnabled: !!config.stripeSecretKey,
     };
   });
@@ -77,7 +77,7 @@ async function start() {
     console.log(`[pulseboard] server listening on ${config.host}:${config.port}`);
     console.log(`[pulseboard] client origins: ${config.clientUrls.join(', ')}`);
     console.log(`[pulseboard] discord webhooks: ${config.discordWebhookUrl ? 'enabled' : 'disabled'}`);
-    console.log(`[pulseboard] AI features: ${config.anthropicApiKey && config.githubToken ? 'enabled' : 'disabled'}`);
+    console.log(`[pulseboard] AI features: ${config.openaiApiKey && config.githubToken ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] Stripe payments: ${config.stripeSecretKey ? 'enabled' : 'disabled'}`);
   } catch (err) {
     fastify.log.error(err);

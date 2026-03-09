@@ -112,8 +112,8 @@ function isAllowedFile(path: string): path is AllowedFile {
 }
 
 export async function generateChanges(userPrompt: string): Promise<AIResult> {
-  if (!config.anthropicApiKey) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
+  if (!config.openaiApiKey) {
+    throw new Error('OPENAI_API_KEY not configured');
   }
 
   const fileContents = await fetchAllowedFileContents();
@@ -123,34 +123,35 @@ export async function generateChanges(userPrompt: string): Promise<AIResult> {
 
   const systemPrompt = buildSystemPrompt(fileContents);
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': config.anthropicApiKey,
-      'anthropic-version': '2023-06-01',
+      Authorization: `Bearer ${config.openaiApiKey}`,
     },
     body: JSON.stringify({
-      model: config.anthropicModel,
+      model: config.openaiModel,
       max_tokens: 16384,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
     }),
   });
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`OpenAI API error ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = (await res.json()) as {
-    content: Array<{ type: string; text: string }>;
+    choices: Array<{ message: { content: string } }>;
   };
-  const textBlock = data.content.find((b) => b.type === 'text');
-  if (!textBlock) throw new Error('No text in Anthropic response');
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('No content in OpenAI response');
 
   // Parse JSON from response (strip any markdown fences if present)
-  let jsonText = textBlock.text.trim();
+  let jsonText = content.trim();
   if (jsonText.startsWith('```')) {
     jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   }

@@ -9,8 +9,8 @@ interface Config {
   syncRequiredUsers: number;
   discordWebhookUrl: string | null;
   // AI feature
-  anthropicApiKey: string | null;
-  anthropicModel: string;
+  openaiApiKey: string | null;
+  openaiModel: string;
   githubToken: string | null;
   githubOwner: string | null;
   githubRepo: string | null;
@@ -50,8 +50,8 @@ export const config: Readonly<Config> = Object.freeze({
   syncWindowMs: num('SYNC_WINDOW_MS', 600),
   syncRequiredUsers: num('SYNC_REQUIRED_USERS', 2),
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || null,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
-  anthropicModel: str('ANTHROPIC_MODEL', 'claude-sonnet-4-20250514'),
+  openaiApiKey: process.env.OPENAI_API_KEY || null,
+  openaiModel: str('OPENAI_MODEL', 'gpt-4o'),
   githubToken: process.env.GITHUB_TOKEN || null,
   githubOwner: process.env.GITHUB_OWNER || null,
   githubRepo: process.env.GITHUB_REPO || null,

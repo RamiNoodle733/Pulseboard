@@ -186,7 +186,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       io.emit('ws:user-count', { count });
 
       // Send AI feature info
-      const aiEnabled = !!(config.anthropicApiKey && config.githubToken);
+      const aiEnabled = !!(config.openaiApiKey && config.githubToken);
       socket.emit('ws:prompt-info', {
         freePromptsRemaining: getFreePromptsRemaining(ip),
         freePromptsTotal: config.promptFreeLimit,
@@ -401,7 +401,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         return;
       }
 
-      if (!config.anthropicApiKey || !config.githubToken || !config.githubOwner || !config.githubRepo) {
+      if (!config.openaiApiKey || !config.githubToken || !config.githubOwner || !config.githubRepo) {
         socket.emit('ws:error', { message: 'AI features not configured' });
         return;
       }
