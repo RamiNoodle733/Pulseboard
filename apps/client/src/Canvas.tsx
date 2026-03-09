@@ -122,6 +122,17 @@ export default function Canvas({ width, height }: CanvasProps) {
         ctx.stroke();
       }
 
+      // Green glowing blob
+      const greenBlobX = width / 2;
+      const greenBlobY = height / 2;
+      const greenBlobRadius = 50;
+      const greenGradient = ctx.createRadialGradient(greenBlobX, greenBlobY, 0, greenBlobX, greenBlobY, greenBlobRadius);
+      greenGradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
+      greenGradient.addColorStop(1, 'rgba(0, 255, 0, 0)');
+
+      ctx.fillStyle = greenGradient;
+      ctx.fillRect(greenBlobX - greenBlobRadius, greenBlobY - greenBlobRadius, greenBlobRadius * 2, greenBlobRadius * 2);
+
       // Influence field: abstract city glow from world state
       const ws = worldStateRef.current;
       if (ws && ws.cities.length > 0) {
