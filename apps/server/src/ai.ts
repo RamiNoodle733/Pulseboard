@@ -7,7 +7,8 @@ export const ALLOWED_FILES = [
   'apps/client/src/index.css',
   'apps/client/src/components/StreakDisplay.tsx',
   'apps/client/src/components/CityTicker.tsx',
-  'apps/client/src/components/DataBar.tsx',
+  'apps/client/src/components/ContributionBar.tsx',
+  'apps/client/src/components/EventBanner.tsx',
   'apps/client/src/audio.ts',
 ] as const;
 

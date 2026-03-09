@@ -1,6 +1,8 @@
 import type { GlobalStatsPayload } from './stats.js';
+import type { WorldSnapshot } from './worldState.js';
+import type { WorldEvent } from './eventDirector.js';
 
-export type { GlobalStatsPayload };
+export type { GlobalStatsPayload, WorldSnapshot, WorldEvent };
 
 export interface User {
   id: string;
@@ -78,6 +80,7 @@ export interface ServerToClientEvents {
     y: number;
     region: string;
     city: string;
+    energy: number;
   }) => void;
   'ws:burst': (data: {
     streak: number;
@@ -102,11 +105,16 @@ export interface ServerToClientEvents {
   'ws:proposal-update': (data: ProposalPayload) => void;
   'ws:prompt-ack': (data: { proposalId: string; freePromptsRemaining: number }) => void;
   'ws:prompt-info': (data: { freePromptsRemaining: number; freePromptsTotal: number; paidEnabled: boolean }) => void;
+  'ws:world-state': (data: WorldSnapshot) => void;
+  'ws:world-event': (data: WorldEvent) => void;
+  'ws:narration': (data: { text: string; t: number }) => void;
+  'ws:insight': (data: { text: string; t: number }) => void;
 }
 
 export interface ClientToServerEvents {
   'ws:join': (data: { color: string; userAgent?: string }) => void;
   'ws:pulse': (data: { x: number; y: number }) => void;
+  'ws:presence': (data: { x: number; y: number; vx: number; vy: number }) => void;
   'ws:change-color': (data: { color: string }) => void;
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;

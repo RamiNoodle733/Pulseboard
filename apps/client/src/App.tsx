@@ -1,22 +1,26 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket } from './socket';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
-import Onboarding from './components/Onboarding';
 import HUD from './components/HUD';
 import StreakDisplay from './components/StreakDisplay';
 import ColorEditor from './components/ColorEditor';
 import ShareCard from './components/ShareCard';
-import DataBar from './components/DataBar';
+import ContributionBar from './components/ContributionBar';
 import CityTicker from './components/CityTicker';
 import PromptBar from './components/PromptBar';
 import ProposalFeed from './components/ProposalFeed';
-import { playPulseHit, playBurstHit, haptic } from './audio';
+import EventBanner from './components/EventBanner';
+import { playPulseHit, playBurstHit, haptic, resumeAudio } from './audio';
 
-const AUTO_PULSE_IDLE_THRESHOLD = 5000; // 5s idle before auto-pulse
-const AUTO_PULSE_INTERVAL_MIN = 8000;
-const AUTO_PULSE_INTERVAL_MAX = 10000;
+const PRESETS = [
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
+  '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
+];
+
+const PRESENCE_INTERVAL = 200; // emit presence at 5Hz
+const IDLE_PRESENCE_INTERVAL = 2000; // emit idle presence every 2s
 
 export default function App() {
   const [dimensions, setDimensions] = useState({
@@ -33,9 +37,11 @@ export default function App() {
   const showShareCard = useStore((s) => s.showShareCard);
   const lastShareableSync = useStore((s) => s.lastShareableSync);
 
-  // Interaction tracking for auto-pulse
-  const lastInteractionRef = useRef(Date.now());
-  const autoPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Presence tracking refs
+  const lastPosRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastEmitRef = useRef(0);
 
   // Resize handler
   useEffect(() => {
@@ -52,55 +58,35 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
-  // Track user interactions to reset idle timer
+  // Unlock audio on first user interaction
   useEffect(() => {
-    const resetIdle = () => {
-      lastInteractionRef.current = Date.now();
-      useStore.getState().setIsAutoPulsing(false);
+    const unlock = () => {
+      resumeAudio();
+      useStore.getState().setAudioUnlocked();
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('pointermove', unlock);
     };
-    window.addEventListener('pointerdown', resetIdle);
-    window.addEventListener('keydown', resetIdle);
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('pointermove', unlock);
     return () => {
-      window.removeEventListener('pointerdown', resetIdle);
-      window.removeEventListener('keydown', resetIdle);
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('pointermove', unlock);
     };
   }, []);
 
-  // Auto-pulse system
-  useEffect(() => {
-    if (!joined) return;
-
-    const scheduleAutoPulse = () => {
-      const delay = AUTO_PULSE_INTERVAL_MIN + Math.random() * (AUTO_PULSE_INTERVAL_MAX - AUTO_PULSE_INTERVAL_MIN);
-      autoPulseTimerRef.current = setTimeout(() => {
-        const idleTime = Date.now() - lastInteractionRef.current;
-        if (idleTime >= AUTO_PULSE_IDLE_THRESHOLD) {
-          const socket = getSocket();
-          if (socket) {
-            // Random position avoiding edges (10%-90%)
-            const x = 0.1 + Math.random() * 0.8;
-            const y = 0.1 + Math.random() * 0.7; // avoid bottom DataBar area
-            socket.emit('ws:pulse', { x, y });
-            useStore.getState().incrementPulsesSent();
-            useStore.getState().setIsAutoPulsing(true);
-          }
-        }
-        scheduleAutoPulse();
-      }, delay);
-    };
-
-    scheduleAutoPulse();
-    return () => {
-      if (autoPulseTimerRef.current) clearTimeout(autoPulseTimerRef.current);
-    };
-  }, [joined]);
-
-  // Socket setup
+  // Socket setup + auto-join
   useEffect(() => {
     const socket = initSocket();
     const store = useStore.getState;
 
-    socket.on('connect', () => store().setConnected(true));
+    socket.on('connect', () => {
+      store().setConnected(true);
+      // Auto-join with random color
+      if (!store().joined) {
+        const color = PRESETS[Math.floor(Math.random() * PRESETS.length)];
+        socket.emit('ws:join', { color, userAgent: navigator.userAgent });
+      }
+    });
     socket.on('disconnect', () => store().setConnected(false));
 
     socket.on(
@@ -114,7 +100,7 @@ export default function App() {
       },
     );
 
-    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y, region, city }) => {
+    socket.on('ws:pulse', ({ userId, color, t, ordinal, x, y, region, city, energy }) => {
       const d = dimensionsRef.current;
       const s = store();
 
@@ -128,9 +114,10 @@ export default function App() {
         ordinal,
         region,
         city: city || '',
+        energy,
       });
       s.incrementPulsesReceived();
-      s.updateActivityLevel(0.15);
+      s.updateActivityLevel(0.15 * energy);
 
       // Capture own userId from pulse echo
       if (s.myOrdinal !== null && ordinal === s.myOrdinal && !s.myUserId) {
@@ -138,13 +125,12 @@ export default function App() {
         if (region) s.setMyRegion(region);
       }
 
-      // Add to city ticker
       if (city) {
         s.addCityTick(city, color);
       }
 
-      playPulseHit(s.soundEnabled);
-      haptic(30);
+      playPulseHit(s.soundEnabled, energy);
+      haptic(Math.round(30 * energy));
     });
 
     socket.on('ws:burst', ({ streak, userIds, countries, cities, distanceKm, cityPair }) => {
@@ -157,12 +143,10 @@ export default function App() {
       s.updateCitySyncCounts(cities || []);
       s.updateActivityLevel(0.4);
 
-      // Set sync distance if present
       if (distanceKm && cityPair) {
         s.setSyncDistance(distanceKm, cityPair);
       }
 
-      // Check if current user participated
       if (s.myUserId && userIds.includes(s.myUserId)) {
         s.incrementSyncs();
       }
@@ -170,7 +154,6 @@ export default function App() {
       playBurstHit(s.soundEnabled, streak);
       haptic([50, 30, 80]);
 
-      // Auto-show share card for notable streaks
       if (streak >= 5) {
         s.setShowShareCard(true);
         setTimeout(() => useStore.getState().setShowShareCard(false), 5000);
@@ -183,6 +166,18 @@ export default function App() {
     socket.on('ws:error', ({ message }) => store().setError(message));
     socket.on('ws:feed', (entry: FeedEntry) => store().addFeedEntry(entry));
     socket.on('ws:global-stats', (stats: GlobalStatsPayload) => store().setGlobalStats(stats));
+
+    // World state events
+    socket.on('ws:world-state', (snapshot: WorldSnapshot) => store().setWorldState(snapshot));
+    socket.on('ws:world-event', (event: WorldEvent) => store().setCurrentEvent(event));
+    socket.on('ws:narration', ({ text }) => {
+      store().setNarration(text);
+      setTimeout(() => useStore.getState().setNarration(null), 15000);
+    });
+    socket.on('ws:insight', ({ text }) => {
+      store().setInsight(text);
+      setTimeout(() => useStore.getState().setInsight(null), 10000);
+    });
 
     // Proposal events
     socket.on('ws:proposals', ({ proposals }) => store().setProposals(proposals));
@@ -204,6 +199,10 @@ export default function App() {
       socket.off('ws:error');
       socket.off('ws:feed');
       socket.off('ws:global-stats');
+      socket.off('ws:world-state');
+      socket.off('ws:world-event');
+      socket.off('ws:narration');
+      socket.off('ws:insight');
       socket.off('ws:proposals');
       socket.off('ws:proposal-update');
       socket.off('ws:prompt-ack');
@@ -211,37 +210,75 @@ export default function App() {
     };
   }, []);
 
-  const handleJoin = useCallback((color: string) => {
+  // Presence emission: pointer move handler
+  const handlePresence = useCallback((clientX: number, clientY: number) => {
     const socket = getSocket();
-    if (socket) {
-      socket.emit('ws:join', { color, userAgent: navigator.userAgent });
+    if (!socket) return;
+
+    const now = Date.now();
+    if (now - lastEmitRef.current < PRESENCE_INTERVAL) return;
+
+    const d = dimensionsRef.current;
+    const nx = clientX / d.width;
+    const ny = clientY / d.height;
+
+    let vx = 0;
+    let vy = 0;
+    if (lastPosRef.current) {
+      const dt = (now - lastPosRef.current.t) / 1000;
+      if (dt > 0) {
+        vx = (nx - lastPosRef.current.x) / dt;
+        vy = (ny - lastPosRef.current.y) / dt;
+      }
     }
+
+    lastPosRef.current = { x: nx, y: ny, t: now };
+    lastEmitRef.current = now;
+
+    socket.emit('ws:presence', { x: nx, y: ny, vx, vy });
+
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    const energy = 0.3 + Math.min(1, speed) * 0.7;
+    useStore.getState().incrementSessionEnergy(energy * 0.1);
   }, []);
 
-  const handleCanvasClick = useCallback((nx: number, ny: number) => {
-    const socket = getSocket();
-    if (socket) {
-      socket.emit('ws:pulse', { x: nx, y: ny });
-      useStore.getState().incrementPulsesSent();
-      lastInteractionRef.current = Date.now();
-      useStore.getState().setIsAutoPulsing(false);
-    }
-  }, []);
+  // Set up presence tracking via pointermove on the window
+  useEffect(() => {
+    if (!joined) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      handlePresence(e.clientX, e.clientY);
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+
+    // Idle presence: emit at low energy if pointer is static
+    idleTimerRef.current = setInterval(() => {
+      const socket = getSocket();
+      if (!socket || !lastPosRef.current) return;
+
+      const now = Date.now();
+      const timeSinceEmit = now - lastEmitRef.current;
+
+      if (timeSinceEmit >= IDLE_PRESENCE_INTERVAL) {
+        const pos = lastPosRef.current;
+        socket.emit('ws:presence', { x: pos.x, y: pos.y, vx: 0, vy: 0 });
+        lastEmitRef.current = now;
+        useStore.getState().incrementSessionEnergy(0.03);
+      }
+    }, IDLE_PRESENCE_INTERVAL);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      if (presenceTimerRef.current) clearInterval(presenceTimerRef.current);
+      if (idleTimerRef.current) clearInterval(idleTimerRef.current);
+    };
+  }, [joined, handlePresence]);
 
   const handleToggleProposals = useCallback(() => {
     const s = useStore.getState();
     s.setShowProposalFeed(!s.showProposalFeed);
   }, []);
-
-  if (!joined) {
-    return (
-      <Onboarding
-        onJoin={handleJoin}
-        width={dimensions.width}
-        height={dimensions.height}
-      />
-    );
-  }
 
   return (
     <div
@@ -251,7 +288,6 @@ export default function App() {
       <Canvas
         width={dimensions.width}
         height={dimensions.height}
-        onPulse={handleCanvasClick}
       />
 
       <HUD
@@ -259,6 +295,7 @@ export default function App() {
         onToggleProposals={handleToggleProposals}
       />
       <StreakDisplay />
+      <EventBanner />
 
       {showColorEditor && (
         <ColorEditor
@@ -278,7 +315,7 @@ export default function App() {
       <PromptBar />
       <ProposalFeed />
       <CityTicker />
-      <DataBar />
+      <ContributionBar />
 
       {error && (
         <div

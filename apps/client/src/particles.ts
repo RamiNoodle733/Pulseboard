@@ -9,7 +9,7 @@ export interface Particle {
   maxLife: number;
   color: string;
   size: number;
-  type: 'trail' | 'burst' | 'spark';
+  type: 'trail' | 'burst' | 'spark' | 'flow';
 }
 
 export interface Shockwave {
@@ -24,24 +24,41 @@ export class ParticleSystem {
   particles: Particle[] = [];
   shockwaves: Shockwave[] = [];
 
-  /** Emit particles radiating from a pulse point */
-  emitPulseTrail(x: number, y: number, color: string): void {
-    const count = 6 + Math.floor(Math.random() * 5); // 6-10
+  /** Emit particles from presence/movement — fewer per call since called more often */
+  emitPresenceTrail(x: number, y: number, color: string, energy: number = 1): void {
+    const count = 2 + Math.floor(energy * 3); // 2-5 based on energy
     if (this.particles.length + count > MAX_PARTICLES) return;
 
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 0.3 + Math.random() * 0.9;
+      const speed = 0.2 + Math.random() * 0.6 * energy;
       this.particles.push({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         born: Date.now(),
-        maxLife: 600 + Math.random() * 400,
+        maxLife: 400 + Math.random() * 300,
         color,
-        size: 1 + Math.random() * 1.5,
+        size: 1 + Math.random() * energy,
         type: 'trail',
+      });
+    }
+
+    // Flow particles for higher energy (longer-lived, directional)
+    if (energy > 0.5 && this.particles.length + 2 <= MAX_PARTICLES) {
+      const flowAngle = Math.random() * Math.PI * 2;
+      const flowSpeed = 0.1 + energy * 0.3;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(flowAngle) * flowSpeed,
+        vy: Math.sin(flowAngle) * flowSpeed,
+        born: Date.now(),
+        maxLife: 1200 + Math.random() * 500,
+        color,
+        size: 2 + energy,
+        type: 'flow',
       });
     }
   }
@@ -86,7 +103,6 @@ export class ParticleSystem {
         maxRadius: 150 + Math.min(streak, 10) * 20,
       });
 
-      // Second ring at high streaks
       if (streak > 10) {
         this.shockwaves.push({
           x: cx,
@@ -110,11 +126,15 @@ export class ParticleSystem {
       }
       p.x += p.vx;
       p.y += p.vy;
-      // Slight gravity on sparks
       if (p.type === 'spark') p.vy += 0.02;
-      // Friction
-      p.vx *= 0.99;
-      p.vy *= 0.99;
+      // flow particles drift slowly
+      if (p.type === 'flow') {
+        p.vx *= 0.995;
+        p.vy *= 0.995;
+      } else {
+        p.vx *= 0.99;
+        p.vy *= 0.99;
+      }
     }
 
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
@@ -133,20 +153,21 @@ export class ParticleSystem {
       const life = 1 - age / p.maxLife;
       if (life <= 0) continue;
 
-      const alpha = life * 0.7;
+      const alpha = p.type === 'flow' ? life * 0.3 : life * 0.7;
       const a = Math.floor(Math.max(0, Math.min(1, alpha)) * 255)
         .toString(16)
         .padStart(2, '0');
 
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * life, 0, Math.PI * 2);
+      const renderSize = p.type === 'flow' ? p.size * (0.5 + life * 0.5) : p.size * life;
+      ctx.arc(p.x, p.y, renderSize, 0, Math.PI * 2);
       ctx.fillStyle = p.color + a;
       ctx.fill();
     }
 
     for (const sw of this.shockwaves) {
       const age = now - sw.born;
-      if (age < 0) continue; // delayed start
+      if (age < 0) continue;
       const life = 1 - age / sw.maxLife;
       if (life <= 0) continue;
 

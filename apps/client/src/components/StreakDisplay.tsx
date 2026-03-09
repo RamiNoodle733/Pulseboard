@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 
+const PHASE_COLORS: Record<string, string> = {
+  surging: 'text-amber-500/60',
+  cooling: 'text-blue-500/60',
+  converging: 'text-cyan-500/60',
+  dormant: 'text-zinc-700',
+  active: 'text-zinc-700',
+};
+
 export default function StreakDisplay() {
   const currentStreak = useStore((s) => s.currentStreak);
   const bestStreak = useStore((s) => s.bestStreak);
   const showingBurst = useStore((s) => s.showingBurst);
+  const worldState = useStore((s) => s.worldState);
   const [scale, setScale] = useState(1);
   const prevStreak = useRef(currentStreak);
+
+  const phaseName = worldState?.phase.name ?? 'active';
+  const phaseColor = PHASE_COLORS[phaseName] || 'text-zinc-700';
 
   // Pop-scale animation on streak increment
   useEffect(() => {
@@ -55,9 +67,12 @@ export default function StreakDisplay() {
       </div>
       {bestStreak > 0 && (
         <div className="text-zinc-800 text-[10px] mt-1 tabular-nums">
-          record {bestStreak}
+          peak resonance {bestStreak}
         </div>
       )}
+      <div className={`text-[9px] mt-2 uppercase tracking-[0.25em] ${phaseColor}`}>
+        {phaseName}
+      </div>
     </div>
   );
 }

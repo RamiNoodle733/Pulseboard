@@ -1,5 +1,7 @@
 let audioCtx: AudioContext | null = null;
 let noiseBuffer: AudioBuffer | null = null;
+let droneGain: GainNode | null = null;
+let droneStarted = false;
 
 function getCtx(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext();
@@ -24,11 +26,47 @@ function getNoiseBuffer(ctx: AudioContext, duration: number): AudioBuffer {
   return buffer;
 }
 
-/** Short dry click/pop — 40ms noise burst through a bandpass filter */
-export function playPulseHit(soundEnabled: boolean): void {
+function ensureDrone(ctx: AudioContext): void {
+  if (droneStarted) return;
+  droneStarted = true;
+
+  const bufferLen = Math.floor(ctx.sampleRate * 2);
+  const droneBuffer = ctx.createBuffer(1, bufferLen, ctx.sampleRate);
+  const data = droneBuffer.getChannelData(0);
+  for (let i = 0; i < bufferLen; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = droneBuffer;
+  source.loop = true;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 100;
+  filter.Q.value = 2;
+
+  droneGain = ctx.createGain();
+  droneGain.gain.value = 0;
+
+  source.connect(filter);
+  filter.connect(droneGain);
+  droneGain.connect(ctx.destination);
+  source.start();
+}
+
+export function updateDroneLevel(energy: number, soundEnabled: boolean): void {
+  if (!soundEnabled || !audioCtx || !droneGain) return;
+  const target = Math.min(0.03, energy * 0.00003);
+  droneGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.5);
+}
+
+/** Short dry click/pop — 40ms noise burst, velocity-scaled */
+export function playPulseHit(soundEnabled: boolean, energy: number = 1): void {
   if (!soundEnabled) return;
   try {
     const ctx = getCtx();
+    ensureDrone(ctx);
     const now = ctx.currentTime;
     const buffer = getNoiseBuffer(ctx, 0.05);
 
@@ -37,11 +75,12 @@ export function playPulseHit(soundEnabled: boolean): void {
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.value = 2500;
+    filter.frequency.value = 2000 + energy * 1000;
     filter.Q.value = 1.0;
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.08, now);
+    const vol = 0.04 + energy * 0.06;
+    gain.gain.setValueAtTime(Math.min(vol, 0.12), now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
 
     source.connect(filter);
@@ -101,6 +140,35 @@ export function playBurstHit(soundEnabled: boolean, streak: number): void {
 
     crackSource.start(now);
     crackSource.stop(now + 0.03);
+  } catch { /* audio not available */ }
+}
+
+/** One-shot event sound — subtle filtered burst */
+export function playEventSound(soundEnabled: boolean, type: string): void {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+    const buffer = getNoiseBuffer(ctx, 0.2);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = type === 'surge' ? 'lowpass' : type === 'resonance_wave' ? 'bandpass' : 'highpass';
+    filter.frequency.value = type === 'surge' ? 200 : type === 'resonance_wave' ? 800 : 4000;
+    filter.Q.value = 2;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    source.start(now);
+    source.stop(now + 0.15);
   } catch { /* audio not available */ }
 }
 

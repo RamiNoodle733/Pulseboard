@@ -27,6 +27,9 @@ import { haversineKm } from './haversine.js';
 import { generateChanges } from './ai.js';
 import { createPR, mergePR, closePR } from './github.js';
 import { createProposalManager } from './proposals.js';
+import { createWorldStateManager } from './worldState.js';
+import { createEventDirector } from './eventDirector.js';
+import { createNarrator } from './narrator.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -79,6 +82,10 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   const streakManager = createStreakManager();
   const statsManager = createStatsManager();
   const proposalManager = createProposalManager();
+  const worldState = createWorldStateManager();
+  const eventDirector = createEventDirector();
+  const narrator = createNarrator();
+
   statsManager.startAutoSave();
   proposalManager.startAutoSave();
 
@@ -98,6 +105,106 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     };
   }
 
+  // Helper: handle streak result after pulse/presence
+  function handleStreakResult(
+    result: { streakIncreased: boolean; streakBroken: boolean; contributors: number; syncedUserIds: string[] },
+    user: User,
+    count: number,
+    emitFeed: boolean,
+  ): void {
+    if (result.streakBroken) {
+      io.emit('ws:streak-broken');
+    }
+
+    if (result.streakIncreased) {
+      const streak = streakManager.getCurrentStreak();
+      const countries: string[] = [];
+      const cities: string[] = [];
+      const positions: Array<{ city: string; lat: number; lon: number }> = [];
+
+      for (const uid of result.syncedUserIds) {
+        const u = users.get(uid);
+        if (u) {
+          if (u.region) {
+            const cc = u.region.split(', ').pop() || '';
+            if (cc && !countries.includes(cc)) countries.push(cc);
+          }
+          if (u.city && !cities.includes(u.city)) {
+            cities.push(u.city);
+            if (u.lat !== 0 || u.lon !== 0) {
+              positions.push({ city: u.city, lat: u.lat, lon: u.lon });
+            }
+          }
+        }
+      }
+
+      let distanceKm: number | null = null;
+      let cityPair: string | null = null;
+
+      if (positions.length >= 2) {
+        let maxDist = 0;
+        let maxI = 0;
+        let maxJ = 1;
+        for (let i = 0; i < positions.length; i++) {
+          for (let j = i + 1; j < positions.length; j++) {
+            const d = haversineKm(
+              positions[i].lat, positions[i].lon,
+              positions[j].lat, positions[j].lon,
+            );
+            if (d > maxDist) {
+              maxDist = d;
+              maxI = i;
+              maxJ = j;
+            }
+          }
+        }
+        if (maxDist > 1) {
+          distanceKm = Math.round(maxDist);
+          cityPair = `${positions[maxI].city} \u2194 ${positions[maxJ].city}`;
+        }
+      }
+
+      statsManager.recordSync(cities, streak);
+      worldState.addResonance(cities);
+
+      io.emit('ws:burst', {
+        streak,
+        contributors: result.contributors,
+        countries,
+        userIds: result.syncedUserIds,
+        cities,
+        distanceKm,
+        cityPair,
+      });
+
+      if (emitFeed) {
+        io.emit('ws:feed', {
+          type: 'sync',
+          ordinal: user.ordinal,
+          color: user.color,
+          region: user.region,
+          t: Date.now(),
+          streak,
+          countries,
+        });
+      }
+
+      if (emitFeed && (streak % 5 === 0 || streak === streakManager.getBestStreak())) {
+        notifyDiscord(
+          streak === streakManager.getBestStreak() ? 'streak_record' : 'streak_milestone',
+          {
+            ordinal: user.ordinal,
+            color: user.color,
+            ip: user.ip,
+            userAgent: user.userAgent,
+            userCount: count,
+            extra: { streak, contributors: result.contributors },
+          },
+        );
+      }
+    }
+  }
+
   // broadcast user count periodically
   setInterval(() => {
     io.emit('ws:user-count', { count: connectedCount() });
@@ -114,6 +221,52 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   setInterval(() => {
     io.emit('ws:global-stats', buildGlobalStats());
   }, 10_000);
+
+  // World state tick every 1s
+  setInterval(() => {
+    worldState.tick();
+  }, 1000);
+
+  // Broadcast world state every 2s
+  setInterval(() => {
+    const snapshot = worldState.getSnapshot();
+    io.emit('ws:world-state', snapshot);
+
+    // Check for world events
+    const event = eventDirector.check(
+      snapshot,
+      streakManager.getCurrentStreak(),
+      streakManager.getBestStreak(),
+    );
+    if (event) {
+      io.emit('ws:world-event', event);
+      console.log(`[event] ${event.type}: ${event.title}`);
+    }
+  }, 2000);
+
+  // Narrator (AI narration + insights)
+  if (config.narratorEnabled) {
+    setInterval(async () => {
+      const snapshot = worldState.getSnapshot();
+      const count = connectedCount();
+      const currentEvent = eventDirector.getCurrentEvent();
+
+      const narration = await narrator.generateNarration(snapshot, count, currentEvent);
+      if (narration) {
+        io.emit('ws:narration', narration);
+      }
+    }, config.narratorIntervalMs);
+
+    setInterval(async () => {
+      const snapshot = worldState.getSnapshot();
+      const totalEverEnergy = worldState.getTotalEnergyEver();
+
+      const insight = await narrator.generateInsight(snapshot, totalEverEnergy);
+      if (insight) {
+        io.emit('ws:insight', insight);
+      }
+    }, 300_000);
+  }
 
   // auto-close expired proposals every 60 seconds
   setInterval(async () => {
@@ -142,7 +295,6 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const ip = extractIp(socket);
       const ua = userAgent || 'unknown';
 
-      // resolve geo (non-blocking, defaults to empty)
       const geo = await resolveLocation(ip);
       const region = formatRegion(geo);
 
@@ -184,6 +336,15 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       });
 
       io.emit('ws:user-count', { count });
+
+      // Send current world state immediately
+      socket.emit('ws:world-state', worldState.getSnapshot());
+
+      // Send current event if any
+      const currentEvent = eventDirector.getCurrentEvent();
+      if (currentEvent) {
+        socket.emit('ws:world-event', currentEvent);
+      }
 
       // Send AI feature info
       const aiEnabled = !!(config.openaiApiKey && config.githubToken);
@@ -234,6 +395,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const py = clamp01(y);
 
       statsManager.recordPulse(user.city, now);
+      worldState.addEnergy(user.city, user.lat, user.lon, 1.0);
 
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
@@ -247,9 +409,9 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         y: py,
         region: user.region,
         city: user.city,
+        energy: 1.0,
       });
 
-      // feed entry for every pulse
       io.emit('ws:feed', {
         type: 'pulse',
         ordinal: user.ordinal,
@@ -258,99 +420,47 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         t: now,
       });
 
-      if (result.streakBroken) {
-        io.emit('ws:streak-broken');
-      }
+      handleStreakResult(result, user, count, true);
+    });
 
-      if (result.streakIncreased) {
-        const streak = streakManager.getCurrentStreak();
+    socket.on('ws:presence', async ({ x, y, vx, vy }) => {
+      const userId = socket.data.userId;
+      if (!userId) return;
 
-        // collect countries and cities of synced users
-        const countries: string[] = [];
-        const cities: string[] = [];
-        const positions: Array<{ city: string; lat: number; lon: number }> = [];
+      const user = users.get(userId);
+      if (!user) return;
 
-        for (const uid of result.syncedUserIds) {
-          const u = users.get(uid);
-          if (u) {
-            if (u.region) {
-              const cc = u.region.split(', ').pop() || '';
-              if (cc && !countries.includes(cc)) countries.push(cc);
-            }
-            if (u.city && !cities.includes(u.city)) {
-              cities.push(u.city);
-              if (u.lat !== 0 || u.lon !== 0) {
-                positions.push({ city: u.city, lat: u.lat, lon: u.lon });
-              }
-            }
-          }
-        }
+      const allowed = await checkPulseLimit(userId);
+      if (!allowed) return;
 
-        // calculate max haversine distance between any synced pair
-        let distanceKm: number | null = null;
-        let cityPair: string | null = null;
+      const now = Date.now();
+      user.lastPulse = now;
 
-        if (positions.length >= 2) {
-          let maxDist = 0;
-          let maxI = 0;
-          let maxJ = 1;
-          for (let i = 0; i < positions.length; i++) {
-            for (let j = i + 1; j < positions.length; j++) {
-              const d = haversineKm(
-                positions[i].lat, positions[i].lon,
-                positions[j].lat, positions[j].lon,
-              );
-              if (d > maxDist) {
-                maxDist = d;
-                maxI = i;
-                maxJ = j;
-              }
-            }
-          }
-          if (maxDist > 1) {
-            distanceKm = Math.round(maxDist);
-            cityPair = `${positions[maxI].city} \u2194 ${positions[maxJ].city}`;
-          }
-        }
+      const px = clamp01(x);
+      const py = clamp01(y);
 
-        // record in persistent stats
-        statsManager.recordSync(cities, streak);
+      const speed = Math.sqrt(vx * vx + vy * vy);
+      const energy = 0.3 + clamp01(speed) * 0.7;
 
-        io.emit('ws:burst', {
-          streak,
-          contributors: result.contributors,
-          countries,
-          userIds: result.syncedUserIds,
-          cities,
-          distanceKm,
-          cityPair,
-        });
+      statsManager.recordPulse(user.city, now);
+      worldState.addEnergy(user.city, user.lat, user.lon, energy);
 
-        // sync feed entry
-        io.emit('ws:feed', {
-          type: 'sync',
-          ordinal: user.ordinal,
-          color: user.color,
-          region: user.region,
-          t: now,
-          streak,
-          countries,
-        });
+      const count = connectedCount();
+      const result = streakManager.addPulse(userId, now, count);
 
-        if (streak % 5 === 0 || streak === streakManager.getBestStreak()) {
-          notifyDiscord(
-            streak === streakManager.getBestStreak() ? 'streak_record' : 'streak_milestone',
-            {
-              ordinal: user.ordinal,
-              color: user.color,
-              ip: user.ip,
-              userAgent: user.userAgent,
-              userCount: count,
-              extra: { streak, contributors: result.contributors },
-            },
-          );
-        }
-      }
+      io.emit('ws:pulse', {
+        userId,
+        color: user.color,
+        t: now,
+        ordinal: user.ordinal,
+        x: px,
+        y: py,
+        region: user.region,
+        city: user.city,
+        energy,
+      });
+
+      handleStreakResult(result, user, count, false);
     });
 
     socket.on('ws:change-color', ({ color }) => {

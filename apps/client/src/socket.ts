@@ -38,6 +38,34 @@ export interface ProposalPayload {
   error: string | null;
 }
 
+export type WorldPhaseName = 'surging' | 'cooling' | 'converging' | 'dormant' | 'active';
+
+export interface WorldSnapshot {
+  totalEnergy: number;
+  cities: Array<{
+    city: string;
+    energy: number;
+    momentum: number;
+  }>;
+  phase: {
+    name: WorldPhaseName;
+    intensity: number;
+    startedAt: number;
+  };
+  hotZones: string[];
+  risingCities: string[];
+}
+
+export interface WorldEvent {
+  id: string;
+  type: 'surge' | 'convergence' | 'resonance_wave' | 'city_awakening' | 'quiet_zone' | 'record_broken';
+  title: string;
+  cities: string[];
+  startedAt: number;
+  duration: number;
+  intensity: number;
+}
+
 export interface ServerToClientEvents {
   'ws:joined': (data: {
     ordinal: number;
@@ -58,6 +86,7 @@ export interface ServerToClientEvents {
     y: number;
     region: string;
     city: string;
+    energy: number;
   }) => void;
   'ws:burst': (data: {
     streak: number;
@@ -82,11 +111,16 @@ export interface ServerToClientEvents {
   'ws:proposal-update': (data: ProposalPayload) => void;
   'ws:prompt-ack': (data: { proposalId: string; freePromptsRemaining: number }) => void;
   'ws:prompt-info': (data: { freePromptsRemaining: number; freePromptsTotal: number; paidEnabled: boolean }) => void;
+  'ws:world-state': (data: WorldSnapshot) => void;
+  'ws:world-event': (data: WorldEvent) => void;
+  'ws:narration': (data: { text: string; t: number }) => void;
+  'ws:insight': (data: { text: string; t: number }) => void;
 }
 
 export interface ClientToServerEvents {
   'ws:join': (data: { color: string; userAgent?: string }) => void;
   'ws:pulse': (data: { x: number; y: number }) => void;
+  'ws:presence': (data: { x: number; y: number; vx: number; vy: number }) => void;
   'ws:change-color': (data: { color: string }) => void;
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;

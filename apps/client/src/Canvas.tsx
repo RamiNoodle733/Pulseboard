@@ -1,13 +1,12 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useStore } from './store';
 import type { Pulse, SyncEvent } from './store';
+import type { WorldSnapshot, WorldEvent } from './socket';
 import { ParticleSystem } from './particles';
 
 interface CanvasProps {
   width: number;
   height: number;
-  onPulse: (nx: number, ny: number) => void;
-  previewMode?: boolean;
 }
 
 function hexWithAlpha(hex: string, alpha: number): string {
@@ -17,11 +16,23 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return hex + a;
 }
 
-export default function Canvas({ width, height, onPulse, previewMode }: CanvasProps) {
+// Deterministic hash: city name -> stable canvas position
+function cityToPosition(city: string, w: number, h: number): { x: number; y: number } {
+  let hash = 0;
+  for (let i = 0; i < city.length; i++) {
+    hash = ((hash << 5) - hash + city.charCodeAt(i)) | 0;
+  }
+  const golden = 0.618033988749895;
+  const x = ((Math.abs(hash) * golden) % 1) * w * 0.8 + w * 0.1;
+  const y = ((Math.abs(hash * 2654435761) * golden) % 1) * h * 0.8 + h * 0.1;
+  return { x, y };
+}
+
+export default function Canvas({ width, height }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particleSystem = useRef(new ParticleSystem());
 
-  // Refs for animation data — avoids re-creating the loop on every state change
+  // Refs for animation data
   const pulsesRef = useRef<Pulse[]>([]);
   const burstRef = useRef<{ showing: boolean; sync: SyncEvent | null }>({
     showing: false,
@@ -29,6 +40,8 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
   });
   const activityRef = useRef(0);
   const shakeRef = useRef({ intensity: 0, startTime: 0 });
+  const worldStateRef = useRef<WorldSnapshot | null>(null);
+  const currentEventRef = useRef<WorldEvent | null>(null);
 
   // Subscribe to store changes via refs
   useEffect(() => {
@@ -37,39 +50,21 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
       pulsesRef.current = state.pulses;
       burstRef.current = { showing: state.showingBurst, sync: state.lastSync };
       activityRef.current = state.activityLevel;
+      worldStateRef.current = state.worldState;
+      currentEventRef.current = state.currentEvent;
 
       // Emit trail particles for newly added pulses
       if (state.pulses.length > prevCount) {
         const newPulses = state.pulses.slice(prevCount);
         for (const p of newPulses) {
-          particleSystem.current.emitPulseTrail(p.x, p.y, p.color);
+          particleSystem.current.emitPresenceTrail(p.x, p.y, p.color, p.energy);
         }
       }
     });
     return unsub;
   }, []);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (previewMode) return;
-      if (e.clientY > height - 44) return;
-      onPulse(e.clientX / width, e.clientY / height);
-    },
-    [width, height, onPulse, previewMode],
-  );
-
-  const handleTouch = useCallback(
-    (e: React.TouchEvent<HTMLCanvasElement>) => {
-      if (previewMode) return;
-      if (e.touches.length === 0) return;
-      if (e.touches[0].clientY > height - 44) return;
-      e.preventDefault();
-      onPulse(e.touches[0].clientX / width, e.touches[0].clientY / height);
-    },
-    [width, height, onPulse, previewMode],
-  );
-
-  // Main animation loop — only depends on dimensions
+  // Main animation loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -108,41 +103,126 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
       ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
       ctx.fillRect(-10, -10, width + 20, height + 20);
 
-      // Draw pulses
-      const pulses = pulsesRef.current;
-      const lifetime = 3500;
+      // Subtle grid lines
+      const gridSpacing = 100;
+      const gridShift = (now * 0.005) % gridSpacing;
+      const gridAlpha = 0.015 + activity * 0.01;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${gridAlpha})`;
+      ctx.lineWidth = 0.5;
+      for (let x = -gridSpacing + gridShift; x < width + gridSpacing; x += gridSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = -gridSpacing + gridShift; y < height + gridSpacing; y += gridSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
 
+      // Influence field: abstract city glow from world state
+      const ws = worldStateRef.current;
+      if (ws && ws.cities.length > 0) {
+        ctx.globalCompositeOperation = 'screen';
+        for (const city of ws.cities) {
+          if (city.energy < 0.5) continue;
+          const pos = cityToPosition(city.city, width, height);
+          const intensity = Math.min(1, city.energy / 200);
+          const radius = 60 + intensity * 120;
+
+          const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, radius);
+          const alpha = 0.02 + intensity * 0.06;
+          // Use a warm color for surging, cool for others
+          const phase = ws.phase.name;
+          const r = phase === 'surging' ? 255 : phase === 'converging' ? 100 : 180;
+          const g = phase === 'surging' ? 180 : phase === 'converging' ? 150 : 200;
+          const b = phase === 'surging' ? 80 : phase === 'converging' ? 255 : 220;
+          grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha})`);
+          grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(pos.x - radius, pos.y - radius, radius * 2, radius * 2);
+        }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      // World event visual effects
+      const evt = currentEventRef.current;
+      if (evt && now - evt.startedAt < evt.duration) {
+        const eventProgress = (now - evt.startedAt) / evt.duration;
+        const eventOpacity = (1 - eventProgress) * evt.intensity;
+
+        if (evt.type === 'surge' && evt.cities.length > 0) {
+          const pos = cityToPosition(evt.cities[0], width, height);
+          const waveRadius = eventProgress * Math.max(width, height) * 0.5;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, waveRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255, 180, 80, ${eventOpacity * 0.15})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (evt.type === 'resonance_wave') {
+          const waveRadius = eventProgress * Math.max(width, height) * 0.6;
+          ctx.beginPath();
+          ctx.arc(width / 2, height / 2, waveRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255, 255, 255, ${eventOpacity * 0.12})`;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        } else if (evt.type === 'convergence' && evt.cities.length >= 2) {
+          ctx.globalAlpha = eventOpacity * 0.1;
+          ctx.strokeStyle = '#4ECDC4';
+          ctx.lineWidth = 1;
+          const positions = evt.cities.map((c) => cityToPosition(c, width, height));
+          for (let i = 0; i < positions.length; i++) {
+            for (let j = i + 1; j < positions.length; j++) {
+              ctx.beginPath();
+              ctx.moveTo(positions[i].x, positions[i].y);
+              ctx.lineTo(positions[j].x, positions[j].y);
+              ctx.stroke();
+            }
+          }
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      // Draw pulses as energy blobs
+      const pulses = pulsesRef.current;
+      const lifetime = 2500;
+
+      ctx.globalCompositeOperation = 'screen';
       for (const pulse of pulses) {
         const age = now - pulse.t;
         if (age > lifetime) continue;
 
         const progress = age / lifetime;
         const opacity = 1 - progress;
+        const energy = pulse.energy || 1;
 
-        // Outer expanding ring
-        const radius = 6 + progress * 50;
-        ctx.beginPath();
-        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = hexWithAlpha(pulse.color, opacity * 0.6);
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Second ring (subtler, slightly delayed)
-        if (progress > 0.1) {
-          const r2 = 6 + (progress - 0.1) * 35;
-          ctx.beginPath();
-          ctx.arc(pulse.x, pulse.y, r2, 0, Math.PI * 2);
-          ctx.strokeStyle = hexWithAlpha(pulse.color, opacity * 0.2);
-          ctx.lineWidth = 0.5;
-          ctx.stroke();
-        }
+        // Energy blob (gradient circle)
+        const blobRadius = (4 + energy * 8) + progress * (20 + energy * 30);
+        const grad = ctx.createRadialGradient(pulse.x, pulse.y, 0, pulse.x, pulse.y, blobRadius);
+        grad.addColorStop(0, hexWithAlpha(pulse.color, opacity * 0.5 * energy));
+        grad.addColorStop(0.5, hexWithAlpha(pulse.color, opacity * 0.2 * energy));
+        grad.addColorStop(1, hexWithAlpha(pulse.color, 0));
+        ctx.fillStyle = grad;
+        ctx.fillRect(pulse.x - blobRadius, pulse.y - blobRadius, blobRadius * 2, blobRadius * 2);
 
         // Core dot
         ctx.beginPath();
-        ctx.arc(pulse.x, pulse.y, 2.5 * opacity, 0, Math.PI * 2);
-        ctx.fillStyle = hexWithAlpha(pulse.color, opacity);
+        ctx.arc(pulse.x, pulse.y, (2 + energy * 1.5) * opacity, 0, Math.PI * 2);
+        ctx.fillStyle = hexWithAlpha(pulse.color, opacity * 0.9);
         ctx.fill();
+
+        // Outer ring
+        const ringRadius = 6 + progress * 40 * energy;
+        ctx.beginPath();
+        ctx.arc(pulse.x, pulse.y, ringRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = hexWithAlpha(pulse.color, opacity * 0.3);
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
       }
+      ctx.globalCompositeOperation = 'source-over';
 
       // Sync constellation effect
       const burst = burstRef.current;
@@ -153,7 +233,6 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
         if (syncAge < syncLifetime) {
           const syncOpacity = 1 - syncAge / syncLifetime;
 
-          // Find positions of synced users
           const positions: { x: number; y: number; color: string }[] = [];
           for (const uid of burst.sync.userIds) {
             for (let i = pulses.length - 1; i >= 0; i--) {
@@ -169,12 +248,10 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
           }
 
           if (positions.length >= 2) {
-            // Emit burst particles once per sync
             if (burst.sync.t !== lastBurstTime) {
               lastBurstTime = burst.sync.t;
               ps.emitSyncBurst(positions, burst.sync.streak);
 
-              // Screen shake for streaks > 3 (reduced on mobile)
               if (burst.sync.streak > 3) {
                 const baseIntensity = Math.min(
                   4 + burst.sync.streak * 1.5,
@@ -187,7 +264,6 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
               }
             }
 
-            // Constellation lines
             ctx.globalAlpha = syncOpacity * 0.3;
             ctx.lineWidth = 0.5;
             for (let i = 0; i < positions.length; i++) {
@@ -227,9 +303,7 @@ export default function Canvas({ width, height, onPulse, previewMode }: CanvasPr
       ref={canvasRef}
       width={width}
       height={height}
-      className="absolute inset-0 cursor-crosshair"
-      onClick={handleClick}
-      onTouchStart={handleTouch}
+      className="absolute inset-0"
     />
   );
 }

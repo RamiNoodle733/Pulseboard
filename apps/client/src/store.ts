@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent } from './socket';
 
 export interface Pulse {
   id: string;
@@ -11,6 +11,7 @@ export interface Pulse {
   ordinal: number;
   region: string;
   city: string;
+  energy: number;
 }
 
 export interface SyncEvent {
@@ -36,8 +37,9 @@ interface Store {
   myRegion: string;
   myCity: string;
   connected: boolean;
+  audioUnlocked: boolean;
 
-  // Streaks
+  // Streaks / Resonance
   currentStreak: number;
   bestStreak: number;
   syncRequired: number;
@@ -62,6 +64,7 @@ interface Store {
   totalPulsesReceived: number;
   syncsParticipatedIn: number;
   personalBestStreak: number;
+  sessionEnergy: number;
 
   // City leaderboard
   citySyncCounts: Record<string, number>;
@@ -83,8 +86,11 @@ interface Store {
   // City ticker
   cityTicker: CityTick[];
 
-  // Auto-pulse
-  isAutoPulsing: boolean;
+  // World state
+  worldState: WorldSnapshot | null;
+  currentEvent: WorldEvent | null;
+  narration: string | null;
+  insight: string | null;
 
   // Overlay state
   showShareCard: boolean;
@@ -118,6 +124,7 @@ interface Store {
   incrementPulsesSent: () => void;
   incrementPulsesReceived: () => void;
   incrementSyncs: () => void;
+  incrementSessionEnergy: (amount: number) => void;
   updateActivityLevel: (delta: number) => void;
   decayActivityLevel: () => void;
   setShowShareCard: (show: boolean) => void;
@@ -126,7 +133,14 @@ interface Store {
   setGlobalStats: (stats: GlobalStatsPayload) => void;
   setSyncDistance: (km: number | null, pair: string | null) => void;
   addCityTick: (city: string, color: string) => void;
-  setIsAutoPulsing: (v: boolean) => void;
+  setAudioUnlocked: () => void;
+
+  // World state actions
+  setWorldState: (snapshot: WorldSnapshot) => void;
+  setCurrentEvent: (event: WorldEvent | null) => void;
+  setNarration: (text: string | null) => void;
+  setInsight: (text: string | null) => void;
+
   setProposals: (proposals: ProposalPayload[]) => void;
   upsertProposal: (proposal: ProposalPayload) => void;
   setPromptInfo: (remaining: number, total: number, paidEnabled: boolean) => void;
@@ -135,7 +149,6 @@ interface Store {
 }
 
 const MAX_FEED = 30;
-
 const MAX_TICKER = 30;
 
 export const useStore = create<Store>((set) => ({
@@ -146,6 +159,7 @@ export const useStore = create<Store>((set) => ({
   myRegion: '',
   myCity: '',
   connected: false,
+  audioUnlocked: false,
 
   currentStreak: 0,
   bestStreak: 0,
@@ -167,6 +181,7 @@ export const useStore = create<Store>((set) => ({
   totalPulsesReceived: 0,
   syncsParticipatedIn: 0,
   personalBestStreak: 0,
+  sessionEnergy: 0,
 
   citySyncCounts: {},
 
@@ -184,7 +199,10 @@ export const useStore = create<Store>((set) => ({
 
   cityTicker: [],
 
-  isAutoPulsing: false,
+  worldState: null,
+  currentEvent: null,
+  narration: null,
+  insight: null,
 
   showShareCard: false,
   lastShareableSync: null,
@@ -247,9 +265,7 @@ export const useStore = create<Store>((set) => ({
     }),
 
   setMyUserId: (userId) => set({ myUserId: userId }),
-
   setMyRegion: (region) => set({ myRegion: region }),
-
   setMyCity: (city) => set({ myCity: city }),
 
   incrementPulsesSent: () =>
@@ -260,6 +276,9 @@ export const useStore = create<Store>((set) => ({
 
   incrementSyncs: () =>
     set((state) => ({ syncsParticipatedIn: state.syncsParticipatedIn + 1 })),
+
+  incrementSessionEnergy: (amount) =>
+    set((state) => ({ sessionEnergy: state.sessionEnergy + amount })),
 
   updateActivityLevel: (delta) =>
     set((state) => ({ activityLevel: Math.min(1, state.activityLevel + delta) })),
@@ -308,7 +327,12 @@ export const useStore = create<Store>((set) => ({
       return { cityTicker: [...filtered, { city, color, t: now }].slice(-MAX_TICKER) };
     }),
 
-  setIsAutoPulsing: (v) => set({ isAutoPulsing: v }),
+  setAudioUnlocked: () => set({ audioUnlocked: true }),
+
+  setWorldState: (snapshot) => set({ worldState: snapshot }),
+  setCurrentEvent: (event) => set({ currentEvent: event }),
+  setNarration: (text) => set({ narration: text }),
+  setInsight: (text) => set({ insight: text }),
 
   setProposals: (proposals) => set({ proposals }),
 
