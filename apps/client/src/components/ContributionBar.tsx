@@ -37,10 +37,10 @@ export default function ContributionBar() {
     >
       {insight && (
         <div className="text-center py-0.5 px-4">
-          <span className="text-[10px] text-zinc-500 italic">{insight}</span>
+          <span className="text-xs text-zinc-500 italic">{insight}</span>
         </div>
       )}
-      <div className="flex items-center justify-between px-3 py-1.5 text-[11px] tabular-nums font-mono">
+      <div className="flex items-center justify-between px-3 py-1.5 text-sm tabular-nums font-mono">
         <div className="flex items-center gap-3">
           <span className="text-zinc-400">
             <span className="text-zinc-600">you</span>{' '}
@@ -57,7 +57,7 @@ export default function ContributionBar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className={`uppercase text-[10px] tracking-wider ${phaseColor}`}>
+          <span className={`uppercase text-xs tracking-wider ${phaseColor}`}>
             {phaseName}
           </span>
           <span className="text-zinc-400">

@@ -2,6 +2,8 @@ import { io, Socket } from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
+export { SERVER_URL };
+
 export interface FeedEntry {
   type: 'pulse' | 'sync';
   ordinal: number;
@@ -76,6 +78,9 @@ export interface ServerToClientEvents {
     userCount: number;
     city: string;
     globalStats: GlobalStatsPayload;
+    isAuthenticated: boolean;
+    authUsername: string | null;
+    authAvatarUrl: string | null;
   }) => void;
   'ws:pulse': (data: {
     userId: string;
@@ -115,29 +120,43 @@ export interface ServerToClientEvents {
   'ws:world-event': (data: WorldEvent) => void;
   'ws:narration': (data: { text: string; t: number }) => void;
   'ws:insight': (data: { text: string; t: number }) => void;
+  'ws:search-results': (data: { proposals: ProposalPayload[]; total: number }) => void;
 }
 
 export interface ClientToServerEvents {
-  'ws:join': (data: { color: string; userAgent?: string }) => void;
+  'ws:join': (data: { color: string; userAgent?: string; deviceId?: string }) => void;
   'ws:pulse': (data: { x: number; y: number }) => void;
   'ws:presence': (data: { x: number; y: number; vx: number; vy: number }) => void;
   'ws:change-color': (data: { color: string }) => void;
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;
+  'ws:search-proposals': (data: { query: string; status?: string; limit?: number; offset?: number }) => void;
 }
 
 export type PulseboardSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 let socket: PulseboardSocket | null = null;
 
+export function getDeviceId(): string {
+  let id = localStorage.getItem('pulseboard:deviceId');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    localStorage.setItem('pulseboard:deviceId', id);
+  }
+  return id;
+}
+
 export function initSocket(): PulseboardSocket {
   if (socket) return socket;
+
+  const token = localStorage.getItem('pulseboard:token');
 
   socket = io(SERVER_URL, {
     transports: ['websocket'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
+    auth: token ? { token } : undefined,
   });
 
   return socket;

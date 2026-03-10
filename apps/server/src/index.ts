@@ -2,8 +2,28 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { config } from './env.js';
 import { createWSServer } from './ws.js';
+import { createPool, runMigrations } from './db.js';
+import { registerAuthRoutes } from './auth.js';
+import { initModelRouterDB } from './modelRouter.js';
+import pg from 'pg';
 
 async function start() {
+  // Initialize database if DATABASE_URL is set
+  let pool: pg.Pool | null = null;
+  if (config.databaseUrl) {
+    pool = createPool(config.databaseUrl);
+    try {
+      await runMigrations(pool);
+      console.log('[pulseboard] database connected and migrations complete');
+      initModelRouterDB(pool);
+    } catch (err) {
+      console.error('[pulseboard] database migration failed:', err);
+      process.exit(1);
+    }
+  } else {
+    console.log('[pulseboard] DATABASE_URL not set, running without persistence');
+  }
+
   const fastify = Fastify({
     logger: {
       level: 'info',
@@ -22,7 +42,12 @@ async function start() {
     credentials: true,
   });
 
-  const wsServer = createWSServer(fastify.server);
+  const wsServer = createWSServer(fastify.server, pool);
+
+  // Register auth routes if DB is available
+  if (pool) {
+    registerAuthRoutes(fastify, pool);
+  }
 
   // graceful shutdown: save stats before exit
   const shutdown = () => {
@@ -79,6 +104,8 @@ async function start() {
     console.log(`[pulseboard] discord webhooks: ${config.discordWebhookUrl ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] AI features: ${config.openaiApiKey && config.githubToken ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] Stripe payments: ${config.stripeSecretKey ? 'enabled' : 'disabled'}`);
+    console.log(`[pulseboard] database: ${config.databaseUrl ? 'connected' : 'in-memory only'}`);
+    console.log(`[pulseboard] GitHub OAuth: ${config.githubOAuthClientId ? 'enabled' : 'disabled'}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

@@ -1,6 +1,14 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+import pg from 'pg';
 import { config } from './env.js';
+
+// DB pool reference - set via initModelRouterDB()
+let dbPool: pg.Pool | null = null;
+
+export function initModelRouterDB(pool: pg.Pool): void {
+  dbPool = pool;
+}
 
 type Tier = 'cheap' | 'medium' | 'expensive';
 
@@ -65,28 +73,56 @@ function saveUsage(): void {
   }
 }
 
-function ensureToday(): void {
+async function ensureToday(): Promise<void> {
   const today = todayUTC();
   if (usage.date !== today) {
     usage = { date: today, premiumUsed: 0, miniUsed: 0 };
-    saveUsage();
+  }
+
+  if (dbPool) {
+    try {
+      const { rows } = await dbPool.query(
+        'SELECT premium_used, mini_used FROM token_usage WHERE date = $1',
+        [today],
+      );
+      if (rows.length > 0) {
+        usage.premiumUsed = Number(rows[0].premium_used);
+        usage.miniUsed = Number(rows[0].mini_used);
+      }
+    } catch { /* fall back to local */ }
   }
 }
 
-function getBudgetRemaining(budgetClass: 'mini' | 'premium'): number {
-  ensureToday();
+async function getBudgetRemaining(budgetClass: 'mini' | 'premium'): Promise<number> {
+  await ensureToday();
   if (budgetClass === 'mini') return DAILY_MINI_BUDGET - usage.miniUsed;
   return DAILY_PREMIUM_BUDGET - usage.premiumUsed;
 }
 
-function recordTokens(budgetClass: 'mini' | 'premium', tokens: number): void {
-  ensureToday();
+async function recordTokens(budgetClass: 'mini' | 'premium', tokens: number): Promise<void> {
+  await ensureToday();
   if (budgetClass === 'mini') {
     usage.miniUsed += tokens;
   } else {
     usage.premiumUsed += tokens;
   }
-  saveUsage();
+
+  if (dbPool) {
+    try {
+      const column = budgetClass === 'mini' ? 'mini_used' : 'premium_used';
+      await dbPool.query(
+        `INSERT INTO token_usage (date, ${column})
+         VALUES (CURRENT_DATE, $1)
+         ON CONFLICT (date) DO UPDATE SET ${column} = token_usage.${column} + $1`,
+        [tokens],
+      );
+    } catch (err) {
+      console.error('[modelRouter] DB token save failed, saving to file:', err);
+      saveUsage();
+    }
+  } else {
+    saveUsage();
+  }
 }
 
 export interface RouteResult {
@@ -108,14 +144,14 @@ export async function routeRequest(
 
   // Downgrade if budget is low
   const tierConfig = TIERS[effectiveTier];
-  const remaining = getBudgetRemaining(tierConfig.budgetClass);
+  const remaining = await getBudgetRemaining(tierConfig.budgetClass);
   if (remaining < tierConfig.maxTokens * 2) {
     if (effectiveTier === 'expensive') effectiveTier = 'medium';
     else if (effectiveTier === 'medium') effectiveTier = 'cheap';
   }
 
   const finalConfig = TIERS[effectiveTier];
-  const finalRemaining = getBudgetRemaining(finalConfig.budgetClass);
+  const finalRemaining = await getBudgetRemaining(finalConfig.budgetClass);
   if (finalRemaining < finalConfig.maxTokens) {
     throw new Error(`Daily ${finalConfig.budgetClass} token budget exhausted`);
   }
@@ -155,9 +191,10 @@ export async function routeRequest(
       if (!content) continue;
 
       const tokensUsed = data.usage?.total_tokens || 0;
-      recordTokens(finalConfig.budgetClass, tokensUsed);
+      await recordTokens(finalConfig.budgetClass, tokensUsed);
 
-      console.log(`[modelRouter] ${effectiveTier}/${model} used ${tokensUsed} tokens (${finalConfig.budgetClass} remaining: ${getBudgetRemaining(finalConfig.budgetClass)})`);
+      const currentRemaining = await getBudgetRemaining(finalConfig.budgetClass);
+      console.log(`[modelRouter] ${effectiveTier}/${model} used ${tokensUsed} tokens (${finalConfig.budgetClass} remaining: ${currentRemaining})`);
 
       return { content, model, tokensUsed };
     } catch (err) {
@@ -169,8 +206,8 @@ export async function routeRequest(
   throw new Error(`All models failed for tier ${effectiveTier}`);
 }
 
-export function getUsageStats() {
-  ensureToday();
+export async function getUsageStats() {
+  await ensureToday();
   return {
     date: usage.date,
     premiumUsed: usage.premiumUsed,

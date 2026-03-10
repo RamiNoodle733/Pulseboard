@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from './store';
-import type { Pulse, SyncEvent } from './store';
+import type { Pulse, SyncEvent, Ripple } from './store';
 import type { WorldSnapshot, WorldEvent } from './socket';
 import { ParticleSystem } from './particles';
 
@@ -42,6 +42,7 @@ export default function Canvas({ width, height }: CanvasProps) {
   const shakeRef = useRef({ intensity: 0, startTime: 0 });
   const worldStateRef = useRef<WorldSnapshot | null>(null);
   const currentEventRef = useRef<WorldEvent | null>(null);
+  const ripplesRef = useRef<Ripple[]>([]);
 
   // Subscribe to store changes via refs
   useEffect(() => {
@@ -52,6 +53,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       activityRef.current = state.activityLevel;
       worldStateRef.current = state.worldState;
       currentEventRef.current = state.currentEvent;
+      ripplesRef.current = state.ripples;
 
       // Emit trail particles for newly added pulses
       if (state.pulses.length > prevCount) {
@@ -197,6 +199,24 @@ export default function Canvas({ width, height }: CanvasProps) {
         }
       }
 
+      // Local ripple effects (subtle expanding circles from cursor movement)
+      const ripples = ripplesRef.current;
+      const rippleLifetime = 800;
+      ctx.globalCompositeOperation = 'screen';
+      for (const ripple of ripples) {
+        const age = now - ripple.t;
+        if (age > rippleLifetime) continue;
+        const progress = age / rippleLifetime;
+        const radius = ripple.maxRadius * progress;
+        const opacity = (1 - progress) * 0.15;
+        ctx.beginPath();
+        ctx.arc(ripple.x, ripple.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = hexWithAlpha(ripple.color, opacity);
+        ctx.lineWidth = 1.5 * (1 - progress);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+
       // Draw pulses as energy blobs
       const pulses = pulsesRef.current;
       const lifetime = 2500;
@@ -305,7 +325,10 @@ export default function Canvas({ width, height }: CanvasProps) {
 
   // Pulse cleanup
   useEffect(() => {
-    const iv = setInterval(() => useStore.getState().clearOldPulses(), 1000);
+    const iv = setInterval(() => {
+      useStore.getState().clearOldPulses();
+      useStore.getState().clearOldRipples();
+    }, 1000);
     return () => clearInterval(iv);
   }, []);
 

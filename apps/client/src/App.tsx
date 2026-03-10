@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { initSocket, getSocket } from './socket';
+import { initSocket, getSocket, getDeviceId } from './socket';
 import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
@@ -36,6 +36,22 @@ export default function App() {
   const error = useStore((s) => s.error);
   const showShareCard = useStore((s) => s.showShareCard);
   const lastShareableSync = useStore((s) => s.lastShareableSync);
+
+  // Handle OAuth token from URL on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      localStorage.setItem('pulseboard:token', token);
+      // Strip token from URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    const authError = params.get('auth_error');
+    if (authError) {
+      useStore.getState().setError('Login failed: ' + authError);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   // Presence tracking refs
   const lastPosRef = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -84,19 +100,21 @@ export default function App() {
       // Auto-join with random color
       if (!store().joined) {
         const color = PRESETS[Math.floor(Math.random() * PRESETS.length)];
-        socket.emit('ws:join', { color, userAgent: navigator.userAgent });
+        const deviceId = getDeviceId();
+        socket.emit('ws:join', { color, userAgent: navigator.userAgent, deviceId });
       }
     });
     socket.on('disconnect', () => store().setConnected(false));
 
     socket.on(
       'ws:joined',
-      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats }) => {
+      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats, isAuthenticated, authUsername, authAvatarUrl }) => {
         store().setJoined(ordinal, color, streak, best);
         store().setSyncRequired(syncRequired);
         store().setUserCount(count);
         if (city) store().setMyCity(city);
         if (globalStats) store().setGlobalStats(globalStats);
+        store().setAuth(isAuthenticated, authUsername, authAvatarUrl);
       },
     );
 
@@ -187,6 +205,10 @@ export default function App() {
       store().setPromptInfo(freePromptsRemaining, freePromptsTotal, paidEnabled),
     );
 
+    socket.on('ws:search-results', () => {
+      // Handled by ProposalFeed component directly
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -207,6 +229,7 @@ export default function App() {
       socket.off('ws:proposal-update');
       socket.off('ws:prompt-ack');
       socket.off('ws:prompt-info');
+      socket.off('ws:search-results');
     };
   }, []);
 
@@ -236,6 +259,9 @@ export default function App() {
     lastEmitRef.current = now;
 
     socket.emit('ws:presence', { x: nx, y: ny, vx, vy });
+
+    // Add local ripple effect
+    useStore.getState().addRipple(clientX, clientY);
 
     const speed = Math.sqrt(vx * vx + vy * vy);
     const energy = 0.3 + Math.min(1, speed) * 0.7;
@@ -325,7 +351,7 @@ export default function App() {
               'max(0.5rem, env(safe-area-inset-bottom, 0.5rem))',
           }}
         >
-          <span className="text-red-400/80 text-xs bg-zinc-900/90 px-3 py-1.5 rounded-full border border-zinc-800">
+          <span className="text-red-400/80 text-sm bg-zinc-900/90 px-3 py-1.5 rounded-full border border-zinc-800">
             {error}
           </span>
         </div>

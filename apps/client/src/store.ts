@@ -28,6 +28,14 @@ export interface CityTick {
   t: number;
 }
 
+export interface Ripple {
+  x: number;
+  y: number;
+  t: number;
+  maxRadius: number;
+  color: string;
+}
+
 interface Store {
   // Connection & identity
   joined: boolean;
@@ -104,6 +112,14 @@ interface Store {
   aiEnabled: boolean;
   showProposalFeed: boolean;
 
+  // Auth
+  isAuthenticated: boolean;
+  authUsername: string | null;
+  authAvatarUrl: string | null;
+
+  // Ripples (local-only visual)
+  ripples: Ripple[];
+
   // Actions
   setJoined: (ordinal: number, color: string, streak: number, bestStreak: number) => void;
   setConnected: (connected: boolean) => void;
@@ -146,6 +162,13 @@ interface Store {
   setPromptInfo: (remaining: number, total: number, paidEnabled: boolean) => void;
   setFreePromptsRemaining: (remaining: number) => void;
   setShowProposalFeed: (show: boolean) => void;
+
+  // Auth actions
+  setAuth: (isAuthenticated: boolean, username: string | null, avatarUrl: string | null) => void;
+
+  // Ripple actions
+  addRipple: (x: number, y: number) => void;
+  clearOldRipples: () => void;
 }
 
 const MAX_FEED = 30;
@@ -213,6 +236,12 @@ export const useStore = create<Store>((set) => ({
   paidEnabled: false,
   aiEnabled: false,
   showProposalFeed: false,
+
+  isAuthenticated: false,
+  authUsername: null,
+  authAvatarUrl: null,
+
+  ripples: [],
 
   setJoined: (ordinal, color, streak, bestStreak) =>
     set({ joined: true, myOrdinal: ordinal, myColor: color, currentStreak: streak, bestStreak, sessionStartTime: Date.now() }),
@@ -353,4 +382,21 @@ export const useStore = create<Store>((set) => ({
   setFreePromptsRemaining: (remaining) => set({ freePromptsRemaining: remaining }),
 
   setShowProposalFeed: (show) => set({ showProposalFeed: show }),
+
+  setAuth: (isAuthenticated, username, avatarUrl) =>
+    set({ isAuthenticated, authUsername: username, authAvatarUrl: avatarUrl }),
+
+  addRipple: (x, y) =>
+    set((state) => ({
+      ripples: [...state.ripples, {
+        x, y, t: Date.now(),
+        maxRadius: 40 + Math.random() * 40,
+        color: state.myColor,
+      }].slice(-50),
+    })),
+
+  clearOldRipples: () =>
+    set((state) => ({
+      ripples: state.ripples.filter((r) => Date.now() - r.t < 1000),
+    })),
 }));

@@ -1,4 +1,4 @@
-import type { GlobalStatsPayload } from './stats.js';
+import type { GlobalStatsPayload } from './db/stats.js';
 import type { WorldSnapshot } from './worldState.js';
 import type { WorldEvent } from './eventDirector.js';
 
@@ -17,6 +17,7 @@ export interface User {
   lastColorChange: number;
   userAgent: string;
   ip: string;
+  dbUserId: number | null;
 }
 
 export interface Pulse {
@@ -70,6 +71,9 @@ export interface ServerToClientEvents {
     userCount: number;
     city: string;
     globalStats: GlobalStatsPayload;
+    isAuthenticated: boolean;
+    authUsername: string | null;
+    authAvatarUrl: string | null;
   }) => void;
   'ws:pulse': (data: {
     userId: string;
@@ -109,15 +113,17 @@ export interface ServerToClientEvents {
   'ws:world-event': (data: WorldEvent) => void;
   'ws:narration': (data: { text: string; t: number }) => void;
   'ws:insight': (data: { text: string; t: number }) => void;
+  'ws:search-results': (data: { proposals: ProposalPayload[]; total: number }) => void;
 }
 
 export interface ClientToServerEvents {
-  'ws:join': (data: { color: string; userAgent?: string }) => void;
+  'ws:join': (data: { color: string; userAgent?: string; deviceId?: string }) => void;
   'ws:pulse': (data: { x: number; y: number }) => void;
   'ws:presence': (data: { x: number; y: number; vx: number; vy: number }) => void;
   'ws:change-color': (data: { color: string }) => void;
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;
+  'ws:search-proposals': (data: { query: string; status?: string; limit?: number; offset?: number }) => void;
 }
 
 export interface InterServerEvents {}
@@ -127,6 +133,8 @@ export interface SocketData {
   ordinal: number;
   color: string;
   userAgent: string;
+  dbUserId: number | null;
+  isAuthenticated: boolean;
 }
 
 export interface WSStats {

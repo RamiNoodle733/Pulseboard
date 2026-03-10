@@ -1,6 +1,7 @@
 import { Server as HTTPServer } from 'http';
 import { Server } from 'socket.io';
 import { nanoid } from 'nanoid';
+import pg from 'pg';
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -23,6 +24,8 @@ import { createStreakManager } from './streak.js';
 import { notifyDiscord } from './discord.js';
 import { resolveLocation, formatRegion } from './geo.js';
 import { createStatsManager } from './stats.js';
+import { createDBStatsManager } from './db/stats.js';
+import { createDBProposalManager } from './db/proposals.js';
 import { haversineKm } from './haversine.js';
 import { generateChanges } from './ai.js';
 import { createPR, mergePR, closePR } from './github.js';
@@ -30,6 +33,7 @@ import { createProposalManager } from './proposals.js';
 import { createWorldStateManager } from './worldState.js';
 import { createEventDirector } from './eventDirector.js';
 import { createNarrator } from './narrator.js';
+import { extractAuthFromSocket, ensureDeviceUser } from './auth.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -64,7 +68,7 @@ export interface WSServer {
   shutdown: () => void;
 }
 
-export function createWSServer(httpServer: HTTPServer): WSServer {
+export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WSServer {
   const io = new Server<
     ClientToServerEvents,
     ServerToClientEvents,
@@ -80,14 +84,50 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
   const users = new Map<string, User>();
   let userOrdinalCounter = 0;
   const streakManager = createStreakManager();
-  const statsManager = createStatsManager();
-  const proposalManager = createProposalManager();
   const worldState = createWorldStateManager();
   const eventDirector = createEventDirector();
   const narrator = createNarrator();
 
-  statsManager.startAutoSave();
-  proposalManager.startAutoSave();
+  // Use DB-backed managers if pool available, else fall back to JSON-file managers
+  const useDB = !!pool;
+  const dbStatsManager = pool ? createDBStatsManager(pool) : null;
+  const dbProposalManager = pool ? createDBProposalManager(pool) : null;
+  const fallbackStatsManager = pool ? null : createStatsManager();
+  const fallbackProposalManager = pool ? null : createProposalManager();
+
+  // Unified interfaces to abstract over DB vs fallback
+  const statsManager = {
+    recordPulse(city: string, now: number) {
+      if (dbStatsManager) dbStatsManager.recordPulse(city, now);
+      else fallbackStatsManager!.recordPulse(city, now);
+    },
+    recordSync(cities: string[], streak: number) {
+      if (dbStatsManager) dbStatsManager.recordSync(cities, streak);
+      else fallbackStatsManager!.recordSync(cities, streak);
+    },
+    getPulsesPerMinute() {
+      return dbStatsManager ? dbStatsManager.getPulsesPerMinute() : fallbackStatsManager!.getPulsesPerMinute();
+    },
+    getTopCities(n: number) {
+      return dbStatsManager ? dbStatsManager.getTopCities(n) : fallbackStatsManager!.getTopCities(n);
+    },
+    getSnapshot() {
+      return dbStatsManager ? dbStatsManager.getSnapshot() : fallbackStatsManager!.getSnapshot();
+    },
+  };
+
+  // Initialize
+  (async () => {
+    if (dbStatsManager) {
+      await dbStatsManager.loadFromDB();
+      dbStatsManager.startAutoSave();
+    } else {
+      fallbackStatsManager!.startAutoSave();
+    }
+    if (fallbackProposalManager) {
+      fallbackProposalManager.startAutoSave();
+    }
+  })();
 
   function connectedCount(): number {
     return io.sockets.sockets.size;
@@ -105,7 +145,6 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     };
   }
 
-  // Helper: handle streak result after pulse/presence
   function handleStreakResult(
     result: { streakIncreased: boolean; streakBroken: boolean; contributors: number; syncedUserIds: string[] },
     user: User,
@@ -232,7 +271,6 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     const snapshot = worldState.getSnapshot();
     io.emit('ws:world-state', snapshot);
 
-    // Check for world events
     const event = eventDirector.check(
       snapshot,
       streakManager.getCurrentStreak(),
@@ -268,23 +306,13 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     }, 300_000);
   }
 
-  // auto-close expired proposals every 60 seconds
-  setInterval(async () => {
-    const expired = proposalManager.getExpiredProposals(config.proposalTtlMs);
-    for (const p of expired) {
-      if (p.prNumber) {
-        await closePR(p.prNumber);
-      }
-      proposalManager.updateStatus(p.id, 'rejected', { resolvedAt: Date.now() });
-      const payload = proposalManager.getPayload(p.id, '');
-      if (payload) io.emit('ws:proposal-update', payload);
-    }
-  }, 60_000);
-
   io.on('connection', (socket) => {
     console.log(`[ws] socket connected: ${socket.id}`);
 
-    socket.on('ws:join', async ({ color, userAgent }) => {
+    // Extract auth from handshake
+    const authPayload = extractAuthFromSocket(socket.handshake);
+
+    socket.on('ws:join', async ({ color, userAgent, deviceId }) => {
       if (!HEX_COLOR.test(color)) {
         socket.emit('ws:error', { message: 'Invalid color format' });
         return;
@@ -297,6 +325,36 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
 
       const geo = await resolveLocation(ip);
       const region = formatRegion(geo);
+
+      // Resolve DB user if pool available
+      let dbUserId: number | null = null;
+      let isAuthenticated = false;
+      let authUsername: string | null = null;
+      let authAvatarUrl: string | null = null;
+
+      if (pool) {
+        if (authPayload) {
+          dbUserId = authPayload.userId;
+          isAuthenticated = true;
+          // Fetch user details
+          try {
+            const { rows } = await pool.query(
+              'SELECT username, avatar_url FROM users WHERE id = $1',
+              [authPayload.userId],
+            );
+            if (rows.length > 0) {
+              authUsername = rows[0].username;
+              authAvatarUrl = rows[0].avatar_url;
+            }
+          } catch { /* ignore */ }
+        } else if (deviceId) {
+          try {
+            dbUserId = await ensureDeviceUser(pool, deviceId, color);
+          } catch (err) {
+            console.error('[ws] failed to ensure device user:', err);
+          }
+        }
+      }
 
       const user: User = {
         id: userId,
@@ -311,6 +369,7 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         lastColorChange: Date.now(),
         userAgent: ua,
         ip,
+        dbUserId,
       };
 
       users.set(userId, user);
@@ -319,8 +378,10 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       socket.data.ordinal = userOrdinalCounter;
       socket.data.color = color;
       socket.data.userAgent = ua;
+      socket.data.dbUserId = dbUserId;
+      socket.data.isAuthenticated = isAuthenticated;
 
-      console.log(`[user] User${userOrdinalCounter} joined with ${color} from ${region || 'unknown'}`);
+      console.log(`[user] User${userOrdinalCounter} joined with ${color} from ${region || 'unknown'}${isAuthenticated ? ` (${authUsername})` : ''}`);
 
       const count = connectedCount();
 
@@ -333,20 +394,20 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         userCount: count,
         city: geo.city,
         globalStats: buildGlobalStats(),
+        isAuthenticated,
+        authUsername,
+        authAvatarUrl,
       });
 
       io.emit('ws:user-count', { count });
 
-      // Send current world state immediately
       socket.emit('ws:world-state', worldState.getSnapshot());
 
-      // Send current event if any
       const currentEvent = eventDirector.getCurrentEvent();
       if (currentEvent) {
         socket.emit('ws:world-event', currentEvent);
       }
 
-      // Send AI feature info
       const aiEnabled = !!(config.openaiApiKey && config.githubToken);
       socket.emit('ws:prompt-info', {
         freePromptsRemaining: getFreePromptsRemaining(ip),
@@ -354,9 +415,14 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         paidEnabled: !!config.stripeSecretKey,
       });
       if (aiEnabled) {
-        socket.emit('ws:proposals', {
-          proposals: proposalManager.getActivePayloads(userId),
-        });
+        if (dbProposalManager) {
+          const proposals = await dbProposalManager.getActivePayloads(dbUserId);
+          socket.emit('ws:proposals', { proposals });
+        } else {
+          socket.emit('ws:proposals', {
+            proposals: fallbackProposalManager!.getActivePayloads(userId),
+          });
+        }
       }
 
       notifyDiscord('user_join', {
@@ -436,9 +502,6 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const now = Date.now();
       user.lastPulse = now;
 
-      const px = clamp01(x);
-      const py = clamp01(y);
-
       const speed = Math.sqrt(vx * vx + vy * vy);
       const energy = 0.3 + clamp01(speed) * 0.7;
 
@@ -448,17 +511,8 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
 
-      io.emit('ws:pulse', {
-        userId,
-        color: user.color,
-        t: now,
-        ordinal: user.ordinal,
-        x: px,
-        y: py,
-        region: user.region,
-        city: user.city,
-        energy,
-      });
+      // NO broadcast of ws:pulse -- presence is silent to other clients
+      // The city glows and world state broadcast handle visibility
 
       handleStreakResult(result, user, count, false);
     });
@@ -552,27 +606,51 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
       }
 
       const proposalId = nanoid(10);
-      proposalManager.createProposal(proposalId, trimmed, userId, user.ordinal);
+
+      if (dbProposalManager) {
+        await dbProposalManager.createProposal(proposalId, trimmed, user.dbUserId, user.ordinal);
+      } else {
+        fallbackProposalManager!.createProposal(proposalId, trimmed, userId, user.ordinal);
+      }
 
       socket.emit('ws:prompt-ack', {
         proposalId,
         freePromptsRemaining: getFreePromptsRemaining(ip),
       });
 
-      io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+      const freshPayload = dbProposalManager
+        ? await dbProposalManager.getPayload(proposalId, null)
+        : fallbackProposalManager!.getPayload(proposalId, '');
+      if (freshPayload) io.emit('ws:proposal-update', freshPayload);
 
       try {
-        proposalManager.updateStatus(proposalId, 'generating');
-        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+        if (dbProposalManager) {
+          await dbProposalManager.updateStatus(proposalId, 'generating');
+        } else {
+          fallbackProposalManager!.updateStatus(proposalId, 'generating');
+        }
+        const genPayload = dbProposalManager
+          ? await dbProposalManager.getPayload(proposalId, null)
+          : fallbackProposalManager!.getPayload(proposalId, '');
+        if (genPayload) io.emit('ws:proposal-update', genPayload);
 
         console.log(`[ai] generating changes for proposal ${proposalId}: "${trimmed}"`);
         const result = await generateChanges(trimmed);
 
         if (result.changes.length === 0) {
-          proposalManager.updateStatus(proposalId, 'failed', {
-            error: result.reasoning || 'No changes generated',
-          });
-          io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+          if (dbProposalManager) {
+            await dbProposalManager.updateStatus(proposalId, 'failed', {
+              error: result.reasoning || 'No changes generated',
+            });
+          } else {
+            fallbackProposalManager!.updateStatus(proposalId, 'failed', {
+              error: result.reasoning || 'No changes generated',
+            });
+          }
+          const failPayload = dbProposalManager
+            ? await dbProposalManager.getPayload(proposalId, null)
+            : fallbackProposalManager!.getPayload(proposalId, '');
+          if (failPayload) io.emit('ws:proposal-update', failPayload);
           return;
         }
 
@@ -597,23 +675,46 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
           proposalId,
         );
 
-        proposalManager.updateStatus(proposalId, 'pr-created', {
-          summary: result.summary,
-          reasoning: result.reasoning,
-          changedFiles: result.changes.map((c) => c.path),
-          prNumber: pr.prNumber,
-          prUrl: pr.prUrl,
-          branchName: pr.branchName,
-        });
+        if (dbProposalManager) {
+          await dbProposalManager.updateStatus(proposalId, 'pr-created', {
+            summary: result.summary,
+            reasoning: result.reasoning,
+            changedFiles: result.changes.map((c) => c.path),
+            prNumber: pr.prNumber,
+            prUrl: pr.prUrl,
+            branchName: pr.branchName,
+          });
+        } else {
+          fallbackProposalManager!.updateStatus(proposalId, 'pr-created', {
+            summary: result.summary,
+            reasoning: result.reasoning,
+            changedFiles: result.changes.map((c) => c.path),
+            prNumber: pr.prNumber,
+            prUrl: pr.prUrl,
+            branchName: pr.branchName,
+          });
+        }
 
-        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+        const prPayload = dbProposalManager
+          ? await dbProposalManager.getPayload(proposalId, null)
+          : fallbackProposalManager!.getPayload(proposalId, '');
+        if (prPayload) io.emit('ws:proposal-update', prPayload);
         console.log(`[ai] proposal ${proposalId} -> PR #${pr.prNumber}`);
       } catch (err) {
         console.error(`[ai] proposal ${proposalId} failed:`, err);
-        proposalManager.updateStatus(proposalId, 'failed', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-        io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
+        if (dbProposalManager) {
+          await dbProposalManager.updateStatus(proposalId, 'failed', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        } else {
+          fallbackProposalManager!.updateStatus(proposalId, 'failed', {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
+        const errPayload = dbProposalManager
+          ? await dbProposalManager.getPayload(proposalId, null)
+          : fallbackProposalManager!.getPayload(proposalId, '');
+        if (errPayload) io.emit('ws:proposal-update', errPayload);
       }
     });
 
@@ -629,45 +730,103 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
         return;
       }
 
-      const result = proposalManager.vote(proposalId, userId, direction);
-      if (!result) {
-        socket.emit('ws:error', { message: 'Proposal not found or not votable' });
+      // Gate voting behind GitHub auth when DB is available
+      if (useDB && !socket.data.isAuthenticated) {
+        socket.emit('ws:error', { message: 'Sign in with GitHub to vote' });
         return;
       }
 
-      io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
-
-      const count = connectedCount();
-
-      if (proposalManager.shouldMerge(proposalId, count)) {
-        try {
-          const payload = proposalManager.getPayload(proposalId, '')!;
-          if (payload.prUrl) {
-            const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
-            if (prNum > 0) {
-              await mergePR(prNum);
-              proposalManager.updateStatus(proposalId, 'merged', { resolvedAt: Date.now() });
-              io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
-              console.log(`[ai] proposal ${proposalId} merged via community vote`);
-            }
-          }
-        } catch (err) {
-          console.error(`[ai] merge failed for ${proposalId}:`, err);
+      if (dbProposalManager && socket.data.dbUserId) {
+        const result = await dbProposalManager.vote(proposalId, socket.data.dbUserId, direction);
+        if (!result) {
+          socket.emit('ws:error', { message: 'Proposal not found or not votable' });
+          return;
         }
-      } else if (proposalManager.shouldReject(proposalId, count)) {
-        try {
-          const payload = proposalManager.getPayload(proposalId, '')!;
-          if (payload.prUrl) {
-            const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
-            if (prNum > 0) {
-              await closePR(prNum);
+
+        const payload = await dbProposalManager.getPayload(proposalId, socket.data.dbUserId);
+        if (payload) io.emit('ws:proposal-update', payload);
+
+        const count = connectedCount();
+        if (await dbProposalManager.shouldMerge(proposalId, count)) {
+          try {
+            if (payload?.prUrl) {
+              const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+              if (prNum > 0) {
+                await mergePR(prNum);
+                await dbProposalManager.updateStatus(proposalId, 'merged', { resolvedAt: Date.now() });
+                const mergedPayload = await dbProposalManager.getPayload(proposalId, null);
+                if (mergedPayload) io.emit('ws:proposal-update', mergedPayload);
+                console.log(`[ai] proposal ${proposalId} merged via community vote`);
+              }
             }
+          } catch (err) {
+            console.error(`[ai] merge failed for ${proposalId}:`, err);
           }
-          proposalManager.updateStatus(proposalId, 'rejected', { resolvedAt: Date.now() });
-          io.emit('ws:proposal-update', proposalManager.getPayload(proposalId, '')!);
-        } catch (err) {
-          console.error(`[ai] reject failed for ${proposalId}:`, err);
+        } else if (await dbProposalManager.shouldReject(proposalId, count)) {
+          try {
+            if (payload?.prUrl) {
+              const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+              if (prNum > 0) await closePR(prNum);
+            }
+            await dbProposalManager.updateStatus(proposalId, 'rejected', { resolvedAt: Date.now() });
+            const rejPayload = await dbProposalManager.getPayload(proposalId, null);
+            if (rejPayload) io.emit('ws:proposal-update', rejPayload);
+          } catch (err) {
+            console.error(`[ai] reject failed for ${proposalId}:`, err);
+          }
         }
+      } else {
+        // Fallback in-memory proposal manager
+        const result = fallbackProposalManager!.vote(proposalId, userId, direction);
+        if (!result) {
+          socket.emit('ws:error', { message: 'Proposal not found or not votable' });
+          return;
+        }
+
+        io.emit('ws:proposal-update', fallbackProposalManager!.getPayload(proposalId, '')!);
+
+        const count = connectedCount();
+        if (fallbackProposalManager!.shouldMerge(proposalId, count)) {
+          try {
+            const payload = fallbackProposalManager!.getPayload(proposalId, '')!;
+            if (payload.prUrl) {
+              const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+              if (prNum > 0) {
+                await mergePR(prNum);
+                fallbackProposalManager!.updateStatus(proposalId, 'merged', { resolvedAt: Date.now() });
+                io.emit('ws:proposal-update', fallbackProposalManager!.getPayload(proposalId, '')!);
+              }
+            }
+          } catch (err) {
+            console.error(`[ai] merge failed for ${proposalId}:`, err);
+          }
+        } else if (fallbackProposalManager!.shouldReject(proposalId, count)) {
+          try {
+            const payload = fallbackProposalManager!.getPayload(proposalId, '')!;
+            if (payload.prUrl) {
+              const prNum = parseInt(payload.prUrl.split('/').pop() || '0');
+              if (prNum > 0) await closePR(prNum);
+            }
+            fallbackProposalManager!.updateStatus(proposalId, 'rejected', { resolvedAt: Date.now() });
+            io.emit('ws:proposal-update', fallbackProposalManager!.getPayload(proposalId, '')!);
+          } catch (err) {
+            console.error(`[ai] reject failed for ${proposalId}:`, err);
+          }
+        }
+      }
+    });
+
+    socket.on('ws:search-proposals', async ({ query, status, limit, offset }) => {
+      if (!dbProposalManager) {
+        socket.emit('ws:error', { message: 'Search requires database' });
+        return;
+      }
+      try {
+        const results = await dbProposalManager.search(query, status, limit || 20, offset || 0);
+        socket.emit('ws:search-results', results);
+      } catch (err) {
+        console.error('[ws] search failed:', err);
+        socket.emit('ws:error', { message: 'Search failed' });
       }
     });
 
@@ -707,5 +866,13 @@ export function createWSServer(httpServer: HTTPServer): WSServer {
     };
   }
 
-  return { io, getStats, shutdown: () => { statsManager.shutdown(); proposalManager.shutdown(); } };
+  return {
+    io,
+    getStats,
+    shutdown: () => {
+      if (dbStatsManager) dbStatsManager.shutdown();
+      else fallbackStatsManager?.shutdown();
+      if (fallbackProposalManager) fallbackProposalManager.shutdown();
+    },
+  };
 }

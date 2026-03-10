@@ -66,11 +66,11 @@ export default function StreakDisplay() {
         {currentStreak}
       </div>
       {bestStreak > 0 && (
-        <div className="text-zinc-800 text-[10px] mt-1 tabular-nums">
+        <div className="text-zinc-800 text-xs mt-1 tabular-nums">
           peak resonance {bestStreak}
         </div>
       )}
-      <div className={`text-[9px] mt-2 uppercase tracking-[0.25em] ${phaseColor}`}>
+      <div className={`text-xs mt-2 uppercase tracking-[0.25em] ${phaseColor}`}>
         {phaseName}
       </div>
     </div>

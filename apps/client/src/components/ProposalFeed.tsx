@@ -2,12 +2,14 @@ import { useCallback } from 'react';
 import { getSocket } from '../socket';
 import { useStore } from '../store';
 import type { ProposalPayload } from '../socket';
+import ProposalSearch from './ProposalSearch';
 
 function timeAgo(ts: number): string {
   const diff = Math.floor((Date.now() - ts) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -29,6 +31,8 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+
   const handleVote = useCallback((direction: 'up' | 'down') => {
     const socket = getSocket();
     if (socket) {
@@ -42,12 +46,12 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
   return (
     <div className="border border-zinc-800 rounded-lg p-3 space-y-2">
       {/* Prompt */}
-      <p className="text-zinc-300 text-[11px] font-mono leading-relaxed">
+      <p className="text-zinc-300 text-sm font-mono leading-relaxed">
         &ldquo;{proposal.prompt}&rdquo;
       </p>
 
       {/* Status + submitter */}
-      <div className="flex items-center gap-2 text-[9px] font-mono">
+      <div className="flex items-center gap-2 text-xs font-mono">
         <span className={`px-1.5 py-0.5 rounded ${statusClass}`}>
           {statusLabel}
         </span>
@@ -58,7 +62,7 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
 
       {/* AI summary */}
       {proposal.summary && (
-        <p className="text-zinc-500 text-[10px] font-mono leading-snug">
+        <p className="text-zinc-500 text-xs font-mono leading-snug">
           {proposal.summary}
         </p>
       )}
@@ -67,7 +71,7 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
       {proposal.changedFiles.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {proposal.changedFiles.map((f) => (
-            <span key={f} className="text-[8px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded">
+            <span key={f} className="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded">
               {f.split('/').pop()}
             </span>
           ))}
@@ -76,33 +80,41 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
 
       {/* Error */}
       {proposal.error && (
-        <p className="text-red-400/70 text-[9px] font-mono">{proposal.error}</p>
+        <p className="text-red-400/70 text-xs font-mono">{proposal.error}</p>
       )}
 
       {/* Vote buttons + PR link */}
       <div className="flex items-center gap-3 pt-1">
         {proposal.status === 'pr-created' && (
           <>
-            <button
-              onClick={() => handleVote('up')}
-              className={`text-[10px] font-mono transition-colors ${
-                proposal.myVote === 'up'
-                  ? 'text-emerald-400'
-                  : 'text-zinc-600 hover:text-emerald-400'
-              }`}
-            >
-              ▲ {proposal.upvoteCount}
-            </button>
-            <button
-              onClick={() => handleVote('down')}
-              className={`text-[10px] font-mono transition-colors ${
-                proposal.myVote === 'down'
-                  ? 'text-red-400'
-                  : 'text-zinc-600 hover:text-red-400'
-              }`}
-            >
-              ▼ {proposal.downvoteCount}
-            </button>
+            {isAuthenticated ? (
+              <>
+                <button
+                  onClick={() => handleVote('up')}
+                  className={`text-sm font-mono transition-colors ${
+                    proposal.myVote === 'up'
+                      ? 'text-emerald-400'
+                      : 'text-zinc-600 hover:text-emerald-400'
+                  }`}
+                >
+                  ▲ {proposal.upvoteCount}
+                </button>
+                <button
+                  onClick={() => handleVote('down')}
+                  className={`text-sm font-mono transition-colors ${
+                    proposal.myVote === 'down'
+                      ? 'text-red-400'
+                      : 'text-zinc-600 hover:text-red-400'
+                  }`}
+                >
+                  ▼ {proposal.downvoteCount}
+                </button>
+              </>
+            ) : (
+              <span className="text-xs font-mono text-zinc-600 italic">
+                Sign in to vote
+              </span>
+            )}
           </>
         )}
         {proposal.prUrl && (
@@ -110,7 +122,7 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
             href={proposal.prUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[9px] font-mono text-zinc-600 hover:text-blue-400 transition-colors ml-auto"
+            className="text-xs font-mono text-zinc-600 hover:text-blue-400 transition-colors ml-auto"
           >
             PR →
           </a>
@@ -127,22 +139,24 @@ export default function ProposalFeed() {
   if (!show) return null;
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-72 z-40 bg-zinc-900/95 backdrop-blur border-l border-zinc-800 overflow-y-auto pointer-events-auto">
+    <div className="fixed right-0 top-0 bottom-0 w-80 z-40 bg-zinc-900/95 backdrop-blur border-l border-zinc-800 overflow-y-auto pointer-events-auto">
       <div className="p-3 space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+          <h2 className="text-xs font-mono uppercase tracking-wider text-zinc-500">
             Proposals
           </h2>
           <button
             onClick={() => useStore.getState().setShowProposalFeed(false)}
-            className="text-zinc-600 hover:text-zinc-400 text-xs transition-colors"
+            className="text-zinc-600 hover:text-zinc-400 text-sm transition-colors"
           >
             ✕
           </button>
         </div>
 
+        <ProposalSearch />
+
         {proposals.length === 0 && (
-          <p className="text-zinc-700 text-[10px] font-mono text-center py-8">
+          <p className="text-zinc-700 text-xs font-mono text-center py-8">
             No proposals yet. Type a prompt below to propose a change.
           </p>
         )}

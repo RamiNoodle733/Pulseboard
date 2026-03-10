@@ -45,7 +45,7 @@ export default function PromptBar() {
   const canSubmit = prompt.trim().length >= 5 && !submitting && (canSubmitFree || paidEnabled);
 
   return (
-    <div className="fixed bottom-12 left-0 right-0 z-20 flex justify-center pointer-events-none px-4">
+    <div className="fixed bottom-16 left-0 right-0 z-20 flex justify-center pointer-events-none px-4">
       <div className="w-full max-w-lg pointer-events-auto">
         <div className="flex items-center gap-2 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-lg px-3 py-2">
           <input
@@ -55,16 +55,16 @@ export default function PromptBar() {
             onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
             placeholder="Describe a change to the site..."
             maxLength={500}
-            className="flex-1 bg-transparent text-zinc-200 text-xs font-mono placeholder:text-zinc-600 outline-none"
+            className="flex-1 bg-transparent text-zinc-200 text-sm font-mono placeholder:text-zinc-600 outline-none"
             disabled={submitting}
           />
-          <span className="text-[9px] font-mono text-zinc-600 whitespace-nowrap">
+          <span className="text-xs font-mono text-zinc-600 whitespace-nowrap">
             {canSubmitFree ? `${freePromptsRemaining} free` : paidEnabled ? '$0.25' : 'limit reached'}
           </span>
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="text-[9px] font-mono uppercase tracking-wider px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="text-xs font-mono uppercase tracking-wider px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? '...' : 'send'}
           </button>

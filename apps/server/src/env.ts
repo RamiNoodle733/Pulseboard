@@ -21,13 +21,18 @@ interface Config {
   promptRatePoints: number;
   promptRateDuration: number;
   proposalMaxActive: number;
-  proposalTtlMs: number;
   // Model routing budgets
   openaiDailyPremiumBudget: number;
   openaiDailyMiniBudget: number;
   // Narrator
   narratorEnabled: boolean;
   narratorIntervalMs: number;
+  // Database
+  databaseUrl: string | null;
+  // GitHub OAuth
+  githubOAuthClientId: string | null;
+  githubOAuthClientSecret: string | null;
+  jwtSecret: string;
 }
 
 function num(key: string, fallback: number): number {
@@ -68,9 +73,12 @@ export const config: Readonly<Config> = Object.freeze({
   promptRatePoints: num('PROMPT_RATE_POINTS', 3),
   promptRateDuration: num('PROMPT_RATE_DURATION', 60),
   proposalMaxActive: num('PROPOSAL_MAX_ACTIVE', 20),
-  proposalTtlMs: num('PROPOSAL_TTL_MS', 3600000),
   openaiDailyPremiumBudget: num('OPENAI_DAILY_PREMIUM_BUDGET', 250000),
   openaiDailyMiniBudget: num('OPENAI_DAILY_MINI_BUDGET', 2500000),
   narratorEnabled: !!(process.env.OPENAI_API_KEY),
   narratorIntervalMs: num('NARRATOR_INTERVAL_MS', 60000),
+  databaseUrl: process.env.DATABASE_URL || null,
+  githubOAuthClientId: process.env.GITHUB_OAUTH_CLIENT_ID || null,
+  githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET || null,
+  jwtSecret: str('JWT_SECRET', 'pulseboard-dev-secret-change-me'),
 });

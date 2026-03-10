@@ -38,7 +38,7 @@ export default function EventBanner() {
   if (showNarration) {
     return (
       <div className="fixed top-14 left-1/2 -translate-x-1/2 z-15 pointer-events-none">
-        <div className="px-4 py-1.5 text-[11px] text-zinc-500 italic text-center max-w-md opacity-70 transition-opacity duration-1000">
+        <div className="px-4 py-1.5 text-sm text-zinc-500 italic text-center max-w-md opacity-70 transition-opacity duration-1000">
           {narration}
         </div>
       </div>
@@ -49,7 +49,7 @@ export default function EventBanner() {
 
   return (
     <div className="fixed top-12 left-1/2 -translate-x-1/2 z-15 pointer-events-none animate-fade-in">
-      <div className={`px-4 py-1.5 bg-black/70 backdrop-blur-sm border rounded-full text-[11px] tracking-wider uppercase ${colorClass}`}>
+      <div className={`px-4 py-1.5 bg-black/70 backdrop-blur-sm border rounded-full text-sm tracking-wider uppercase ${colorClass}`}>
         {currentEvent?.title}
       </div>
       <style>{`
