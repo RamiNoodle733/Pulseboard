@@ -1,8 +1,6 @@
 import { useState, useCallback } from 'react';
-import { getSocket } from '../socket';
+import { getSocket, SERVER_URL } from '../socket';
 import { useStore } from '../store';
-
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
 export default function PromptBar() {
   const aiEnabled = useStore((s) => s.aiEnabled);

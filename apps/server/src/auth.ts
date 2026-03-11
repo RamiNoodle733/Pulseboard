@@ -58,7 +58,8 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
     return;
   }
 
-  const clientUrl = config.clientUrls[0] || 'http://localhost:5173';
+  // clientUrl: where to redirect the browser after OAuth completes (trailing slash stripped)
+  const clientUrl = (config.clientUrls[0] || 'http://localhost:5173').replace(/\/+$/, '');
 
   fastify.get('/auth/github', async (_request, reply) => {
     const state = Math.random().toString(36).substring(2);
@@ -197,9 +198,13 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
   console.log('[auth] GitHub OAuth routes registered');
 }
 
+// Build the server's own public URL for OAuth redirect_uri.
+// In production set SERVER_PUBLIC_URL (e.g. https://server-production-d1bb.up.railway.app)
+// so GitHub redirects back to the real domain instead of localhost.
 function getServerUrl(): string {
   if (config.serverPublicUrl) {
     return config.serverPublicUrl.replace(/\/+$/, '');
   }
+  // Local dev fallback — only used when SERVER_PUBLIC_URL is not set
   return `http://localhost:${config.port}`;
 }

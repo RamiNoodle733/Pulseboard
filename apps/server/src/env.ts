@@ -33,6 +33,8 @@ interface Config {
   githubOAuthClientId: string | null;
   githubOAuthClientSecret: string | null;
   jwtSecret: string;
+  // Public URL of this server in production (e.g. https://server-production-d1bb.up.railway.app).
+  // Used to build OAuth redirect_uri. Falls back to localhost for local dev.
   serverPublicUrl: string | null;
 }
 
@@ -55,7 +57,7 @@ export const config: Readonly<Config> = Object.freeze({
   host: str('HOST', '0.0.0.0'),
   clientUrls: str('CLIENT_URL', 'http://localhost:5173')
     .split(',')
-    .map((u) => u.trim()),
+    .map((u) => u.trim().replace(/\/+$/, '')),
   pulseRatePoints: num('PULSE_RATE_POINTS', 5),
   pulseRateDuration: num('PULSE_RATE_DURATION', 3),
   colorChangeCooldown: num('COLOR_CHANGE_COOLDOWN', 300),
