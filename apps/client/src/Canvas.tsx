@@ -16,7 +16,6 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return hex + a;
 }
 
-// Deterministic hash: city name -> stable canvas position
 function cityToPosition(city: string, w: number, h: number): { x: number; y: number } {
   let hash = 0;
   for (let i = 0; i < city.length; i++) {
@@ -32,7 +31,6 @@ export default function Canvas({ width, height }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particleSystem = useRef(new ParticleSystem());
 
-  // Refs for animation data
   const pulsesRef = useRef<Pulse[]>([]);
   const burstRef = useRef<{ showing: boolean; sync: SyncEvent | null }>({
     showing: false,
@@ -44,7 +42,6 @@ export default function Canvas({ width, height }: CanvasProps) {
   const currentEventRef = useRef<WorldEvent | null>(null);
   const ripplesRef = useRef<Ripple[]>([]);
 
-  // Subscribe to store changes via refs
   useEffect(() => {
     const unsub = useStore.subscribe((state) => {
       const prevCount = pulsesRef.current.length;
@@ -55,7 +52,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       currentEventRef.current = state.currentEvent;
       ripplesRef.current = state.ripples;
 
-      // Emit trail particles for newly added pulses
       if (state.pulses.length > prevCount) {
         const newPulses = state.pulses.slice(prevCount);
         for (const p of newPulses) {
@@ -66,7 +62,6 @@ export default function Canvas({ width, height }: CanvasProps) {
     return unsub;
   }, []);
 
-  // Main animation loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -81,7 +76,6 @@ export default function Canvas({ width, height }: CanvasProps) {
     const animate = () => {
       const now = Date.now();
 
-      // Screen shake offset
       let shakeX = 0;
       let shakeY = 0;
       const shake = shakeRef.current;
@@ -97,7 +91,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       ctx.save();
       ctx.translate(shakeX, shakeY);
 
-      // Background: near-black with subtle color shift based on activity
       const activity = activityRef.current;
       const bgR = Math.floor(10 + activity * 8);
       const bgG = Math.floor(10 + activity * 4);
@@ -105,7 +98,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
       ctx.fillRect(-10, -10, width + 20, height + 20);
 
-      // Subtle grid lines
       const gridSpacing = 100;
       const gridShift = (now * 0.005) % gridSpacing;
       const gridAlpha = 0.015 + activity * 0.01;
@@ -124,7 +116,14 @@ export default function Canvas({ width, height }: CanvasProps) {
         ctx.stroke();
       }
 
-      // Green glowing blob
+      const waveAmplitude = 20;
+      const waveFrequency = 0.02;
+      ctx.fillStyle = 'rgba(0, 120, 255, 0.1)';
+      for (let i = 0; i < width; i += 5) {
+        const waveHeight = waveAmplitude * Math.sin(i * waveFrequency + now * 0.002);
+        ctx.fillRect(i, height / 2 + waveHeight, 5, height / 2 - waveHeight);
+      }
+
       const greenBlobX = width / 2;
       const greenBlobY = height / 2;
       const greenBlobRadius = 50;
@@ -135,7 +134,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       ctx.fillStyle = greenGradient;
       ctx.fillRect(greenBlobX - greenBlobRadius, greenBlobY - greenBlobRadius, greenBlobRadius * 2, greenBlobRadius * 2);
 
-      // Influence field: abstract city glow from world state
       const ws = worldStateRef.current;
       if (ws && ws.cities.length > 0) {
         ctx.globalCompositeOperation = 'screen';
@@ -147,7 +145,6 @@ export default function Canvas({ width, height }: CanvasProps) {
 
           const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, radius);
           const alpha = 0.02 + intensity * 0.06;
-          // Use a warm color for surging, cool for others
           const phase = ws.phase.name;
           const r = phase === 'surging' ? 255 : phase === 'converging' ? 100 : 180;
           const g = phase === 'surging' ? 180 : phase === 'converging' ? 150 : 200;
@@ -161,7 +158,6 @@ export default function Canvas({ width, height }: CanvasProps) {
         ctx.globalCompositeOperation = 'source-over';
       }
 
-      // World event visual effects
       const evt = currentEventRef.current;
       if (evt && now - evt.startedAt < evt.duration) {
         const eventProgress = (now - evt.startedAt) / evt.duration;
@@ -199,7 +195,6 @@ export default function Canvas({ width, height }: CanvasProps) {
         }
       }
 
-      // Local ripple effects (subtle expanding circles from cursor movement)
       const ripples = ripplesRef.current;
       const rippleLifetime = 800;
       ctx.globalCompositeOperation = 'screen';
@@ -217,7 +212,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       }
       ctx.globalCompositeOperation = 'source-over';
 
-      // Draw pulses as energy blobs
       const pulses = pulsesRef.current;
       const lifetime = 2500;
 
@@ -230,7 +224,6 @@ export default function Canvas({ width, height }: CanvasProps) {
         const opacity = 1 - progress;
         const energy = pulse.energy || 1;
 
-        // Energy blob (gradient circle)
         const blobRadius = (4 + energy * 8) + progress * (20 + energy * 30);
         const grad = ctx.createRadialGradient(pulse.x, pulse.y, 0, pulse.x, pulse.y, blobRadius);
         grad.addColorStop(0, hexWithAlpha(pulse.color, opacity * 0.5 * energy));
@@ -239,13 +232,11 @@ export default function Canvas({ width, height }: CanvasProps) {
         ctx.fillStyle = grad;
         ctx.fillRect(pulse.x - blobRadius, pulse.y - blobRadius, blobRadius * 2, blobRadius * 2);
 
-        // Core dot
         ctx.beginPath();
         ctx.arc(pulse.x, pulse.y, (2 + energy * 1.5) * opacity, 0, Math.PI * 2);
         ctx.fillStyle = hexWithAlpha(pulse.color, opacity * 0.9);
         ctx.fill();
 
-        // Outer ring
         const ringRadius = 6 + progress * 40 * energy;
         ctx.beginPath();
         ctx.arc(pulse.x, pulse.y, ringRadius, 0, Math.PI * 2);
@@ -255,7 +246,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       }
       ctx.globalCompositeOperation = 'source-over';
 
-      // Sync constellation effect
       const burst = burstRef.current;
       if (burst.showing && burst.sync) {
         const syncAge = now - burst.sync.t;
@@ -311,7 +301,6 @@ export default function Canvas({ width, height }: CanvasProps) {
         }
       }
 
-      // Particles
       ps.update(now);
       ps.render(ctx);
 
@@ -323,7 +312,6 @@ export default function Canvas({ width, height }: CanvasProps) {
     return () => cancelAnimationFrame(raf);
   }, [width, height]);
 
-  // Pulse cleanup
   useEffect(() => {
     const iv = setInterval(() => {
       useStore.getState().clearOldPulses();
