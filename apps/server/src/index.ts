@@ -13,8 +13,12 @@ async function start() {
   if (config.databaseUrl) {
     pool = createPool(config.databaseUrl);
     try {
-      await runMigrations(pool);
-      console.log('[pulseboard] database connected and migrations complete');
+      const migrationCount = await runMigrations(pool);
+      if (migrationCount > 0) {
+        console.log(`[pulseboard] database connected, applied ${migrationCount} migration(s)`);
+      } else {
+        console.log('[pulseboard] database connected, schema up to date');
+      }
       initModelRouterDB(pool);
     } catch (err) {
       console.error('[pulseboard] database migration failed:', err);
