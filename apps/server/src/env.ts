@@ -33,6 +33,7 @@ interface Config {
   githubOAuthClientId: string | null;
   githubOAuthClientSecret: string | null;
   jwtSecret: string;
+  serverPublicUrl: string | null;
 }
 
 function num(key: string, fallback: number): number {
@@ -81,4 +82,5 @@ export const config: Readonly<Config> = Object.freeze({
   githubOAuthClientId: process.env.GITHUB_OAUTH_CLIENT_ID || null,
   githubOAuthClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET || null,
   jwtSecret: str('JWT_SECRET', 'pulseboard-dev-secret-change-me'),
+  serverPublicUrl: process.env.SERVER_PUBLIC_URL || null,
 });

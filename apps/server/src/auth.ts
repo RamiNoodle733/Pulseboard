@@ -64,7 +64,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
     const state = Math.random().toString(36).substring(2);
     const params = new URLSearchParams({
       client_id: config.githubOAuthClientId!,
-      redirect_uri: `${getServerUrl(fastify)}/auth/github/callback`,
+      redirect_uri: `${getServerUrl()}/auth/github/callback`,
       scope: 'read:user',
       state,
     });
@@ -197,11 +197,9 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
   console.log('[auth] GitHub OAuth routes registered');
 }
 
-function getServerUrl(fastify: FastifyInstance): string {
-  // Use the first client URL's origin to infer server URL, or fallback
-  const addr = fastify.server.address();
-  if (addr && typeof addr === 'object') {
-    return `http://${addr.address === '0.0.0.0' ? 'localhost' : addr.address}:${addr.port}`;
+function getServerUrl(): string {
+  if (config.serverPublicUrl) {
+    return config.serverPublicUrl.replace(/\/+$/, '');
   }
   return `http://localhost:${config.port}`;
 }
