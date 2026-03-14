@@ -195,6 +195,72 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
     };
   });
 
+  fastify.get('/auth/profile', async (request, reply) => {
+    const authHeader = request.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return reply.code(401).send({ error: 'Not authenticated' });
+    }
+
+    const payload = verifyJWT(authHeader.slice(7));
+    if (!payload) {
+      return reply.code(401).send({ error: 'Invalid token' });
+    }
+
+    const { rows } = await pool.query(
+      'SELECT id, username, display_name, avatar_url, color, created_at FROM users WHERE id = $1',
+      [payload.userId],
+    );
+    if (rows.length === 0) {
+      return reply.code(404).send({ error: 'User not found' });
+    }
+
+    const user = rows[0];
+
+    // Load XP profile
+    const { rows: xpRows } = await pool.query(
+      'SELECT xp, total_xp, level, login_streak FROM user_xp WHERE user_id = $1',
+      [payload.userId],
+    );
+    const xp = xpRows.length > 0 ? {
+      userId: payload.userId,
+      xp: Number(xpRows[0].xp),
+      totalXP: Number(xpRows[0].total_xp),
+      level: xpRows[0].level,
+      xpToNextLevel: 0,
+      loginStreak: xpRows[0].login_streak,
+    } : { userId: payload.userId, xp: 0, totalXP: 0, level: 1, xpToNextLevel: 100, loginStreak: 0 };
+
+    // Load upgrades
+    const { rows: upgradeRows } = await pool.query(
+      `SELECT uu.upgrade_id, u.slug, u.name, u.category, uu.level, u.max_level
+       FROM user_upgrades uu JOIN upgrades u ON u.id = uu.upgrade_id
+       WHERE uu.user_id = $1`,
+      [payload.userId],
+    );
+
+    return {
+      userId: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      avatarUrl: user.avatar_url,
+      color: user.color,
+      memberSince: new Date(user.created_at).getTime(),
+      xp,
+      upgrades: upgradeRows.map((r: { upgrade_id: number; slug: string; name: string; category: string; level: number; max_level: number }) => ({
+        upgradeId: r.upgrade_id,
+        slug: r.slug,
+        name: r.name,
+        category: r.category,
+        level: r.level,
+        maxLevel: r.max_level,
+      })),
+    };
+  });
+
+  fastify.post('/auth/signout', async (_request, reply) => {
+    return reply.send({ ok: true });
+  });
+
   console.log('[auth] GitHub OAuth routes registered');
 }
 

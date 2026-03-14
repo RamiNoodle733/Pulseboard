@@ -172,6 +172,98 @@ export function playEventSound(soundEnabled: boolean, type: string): void {
   } catch { /* audio not available */ }
 }
 
+/** Level up fanfare — ascending tone sweep with shimmer */
+export function playLevelUp(soundEnabled: boolean): void {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+
+    // Rising tone
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.08, now);
+    oscGain.gain.setValueAtTime(0.08, now + 0.25);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.5);
+
+    // Shimmer layer
+    const buffer = getNoiseBuffer(ctx, 0.4);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 3000;
+    bp.Q.value = 5;
+
+    const shimmerGain = ctx.createGain();
+    shimmerGain.gain.setValueAtTime(0, now);
+    shimmerGain.gain.linearRampToValueAtTime(0.04, now + 0.15);
+    shimmerGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+    source.connect(bp);
+    bp.connect(shimmerGain);
+    shimmerGain.connect(ctx.destination);
+
+    source.start(now);
+    source.stop(now + 0.4);
+  } catch { /* audio not available */ }
+}
+
+/** Quick purchase confirmation — short bright ding */
+export function playUpgradePurchase(soundEnabled: boolean): void {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.setValueAtTime(1000, now + 0.05);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  } catch { /* audio not available */ }
+}
+
+/** Subtle XP gain tick — very quiet, high-freq click */
+export function playXPGain(soundEnabled: boolean): void {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getCtx();
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 2400;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.03);
+  } catch { /* audio not available */ }
+}
+
 export function haptic(pattern: number | number[]): void {
   if (navigator.vibrate) navigator.vibrate(pattern);
 }

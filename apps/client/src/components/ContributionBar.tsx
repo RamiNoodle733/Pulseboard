@@ -20,6 +20,10 @@ export default function ContributionBar() {
   const worldState = useStore((s) => s.worldState);
   const userCount = useStore((s) => s.userCount);
   const insight = useStore((s) => s.insight);
+  const level = useStore((s) => s.level);
+  const xp = useStore((s) => s.xp);
+  const xpToNextLevel = useStore((s) => s.xpToNextLevel);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
 
   const myCityData = worldState?.cities.find((c) => c.city === myCity);
   const cityEnergy = myCityData?.energy ?? 0;
@@ -29,6 +33,7 @@ export default function ContributionBar() {
   const phaseColor = PHASE_COLORS[phaseName] || 'text-zinc-400';
 
   const momentumArrow = cityMomentum > 0.5 ? '\u2191' : cityMomentum < -0.5 ? '\u2193' : '\u2192';
+  const xpPercent = xpToNextLevel > 0 ? Math.min(100, (xp / xpToNextLevel) * 100) : 0;
 
   return (
     <div
@@ -42,6 +47,14 @@ export default function ContributionBar() {
       )}
       <div className="flex items-center justify-between px-3 py-1.5 text-sm tabular-nums font-mono">
         <div className="flex items-center gap-3">
+          {isAuthenticated && (
+            <span className="text-amber-400 text-xs font-bold">
+              Lv.{level}
+              <span className="text-zinc-600 font-normal ml-1">
+                {formatNum(xp)}<span className="text-zinc-700">/{formatNum(xpToNextLevel)}</span>
+              </span>
+            </span>
+          )}
           <span className="text-zinc-400">
             <span className="text-zinc-600">you</span>{' '}
             <span className="text-white">+{formatNum(sessionEnergy)}</span>
@@ -70,6 +83,16 @@ export default function ContributionBar() {
           </span>
         </div>
       </div>
+      {isAuthenticated && (
+        <div className="px-3 pb-1">
+          <div className="w-full h-0.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-500/60 rounded-full transition-all duration-1000"
+              style={{ width: `${xpPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

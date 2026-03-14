@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, UserProfilePayload } from './socket';
 
 export interface Pulse {
   id: string;
@@ -120,6 +120,23 @@ interface Store {
   // Ripples (local-only visual)
   ripples: Ripple[];
 
+  // Gamification
+  xp: number;
+  totalXP: number;
+  level: number;
+  xpToNextLevel: number;
+  loginStreak: number;
+  myUpgrades: UserUpgrade[];
+  availableUpgrades: UpgradeDef[];
+  multipliers: UserMultipliers | null;
+  leaderboardType: string;
+  leaderboardEntries: LeaderboardEntry[];
+  profileData: UserProfilePayload | null;
+  showProfile: boolean;
+  showUpgradeShop: boolean;
+  showLeaderboard: boolean;
+  levelUpNotification: { level: number; t: number } | null;
+
   // Actions
   setJoined: (ordinal: number, color: string, streak: number, bestStreak: number) => void;
   setConnected: (connected: boolean) => void;
@@ -169,6 +186,19 @@ interface Store {
   // Ripple actions
   addRipple: (x: number, y: number) => void;
   clearOldRipples: () => void;
+
+  // Gamification actions
+  setXPUpdate: (data: { xp: number; totalXP: number; level: number; xpToNextLevel: number; leveledUp: boolean }) => void;
+  setMultipliers: (m: UserMultipliers) => void;
+  setAvailableUpgrades: (u: UpgradeDef[]) => void;
+  setMyUpgrades: (u: UserUpgrade[]) => void;
+  setLeaderboard: (type: string, entries: LeaderboardEntry[]) => void;
+  setProfileData: (p: UserProfilePayload | null) => void;
+  setShowProfile: (show: boolean) => void;
+  setShowUpgradeShop: (show: boolean) => void;
+  setShowLeaderboard: (show: boolean) => void;
+  setLevelUpNotification: (level: number) => void;
+  clearLevelUpNotification: () => void;
 }
 
 const MAX_FEED = 30;
@@ -242,6 +272,23 @@ export const useStore = create<Store>((set) => ({
   authAvatarUrl: null,
 
   ripples: [],
+
+  // Gamification defaults
+  xp: 0,
+  totalXP: 0,
+  level: 1,
+  xpToNextLevel: 100,
+  loginStreak: 0,
+  myUpgrades: [],
+  availableUpgrades: [],
+  multipliers: null,
+  leaderboardType: 'global_xp',
+  leaderboardEntries: [],
+  profileData: null,
+  showProfile: false,
+  showUpgradeShop: false,
+  showLeaderboard: false,
+  levelUpNotification: null,
 
   setJoined: (ordinal, color, streak, bestStreak) =>
     set({ joined: true, myOrdinal: ordinal, myColor: color, currentStreak: streak, bestStreak, sessionStartTime: Date.now() }),
@@ -399,4 +446,34 @@ export const useStore = create<Store>((set) => ({
     set((state) => ({
       ripples: state.ripples.filter((r) => Date.now() - r.t < 1000),
     })),
+
+  // Gamification actions
+  setXPUpdate: (data) =>
+    set({
+      xp: data.xp,
+      totalXP: data.totalXP,
+      level: data.level,
+      xpToNextLevel: data.xpToNextLevel,
+    }),
+
+  setMultipliers: (m) => set({ multipliers: m }),
+
+  setAvailableUpgrades: (u) => set({ availableUpgrades: u }),
+
+  setMyUpgrades: (u) => set({ myUpgrades: u }),
+
+  setLeaderboard: (type, entries) => set({ leaderboardType: type, leaderboardEntries: entries }),
+
+  setProfileData: (p) => set({ profileData: p }),
+
+  setShowProfile: (show) => set({ showProfile: show }),
+
+  setShowUpgradeShop: (show) => set({ showUpgradeShop: show }),
+
+  setShowLeaderboard: (show) => set({ showLeaderboard: show }),
+
+  setLevelUpNotification: (level) =>
+    set({ levelUpNotification: { level, t: Date.now() } }),
+
+  clearLevelUpNotification: () => set({ levelUpNotification: null }),
 }));

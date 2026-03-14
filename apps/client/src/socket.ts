@@ -68,6 +68,77 @@ export interface WorldEvent {
   intensity: number;
 }
 
+// Gamification types
+export interface XPProfile {
+  userId: number;
+  xp: number;
+  totalXP: number;
+  level: number;
+  xpToNextLevel: number;
+  loginStreak: number;
+}
+
+export interface UpgradeDef {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  category: 'power' | 'cosmetic' | 'territory';
+  maxLevel: number;
+  baseCost: number;
+  costMultiplier: number;
+  effectType: string;
+  effectValue: number;
+}
+
+export interface UserUpgrade {
+  upgradeId: number;
+  slug: string;
+  name: string;
+  category: string;
+  level: number;
+  maxLevel: number;
+}
+
+export interface UserMultipliers {
+  pulseRateMult: number;
+  energyMult: number;
+  influenceRadius: number;
+  cityEnergyMult: number;
+  diffusionRange: number;
+  trailStyle: number;
+  particleStyle: number;
+  extraColors: number;
+  badgeTier: number;
+  territoryClaimBonus: number;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: number;
+  username: string | null;
+  avatarUrl: string | null;
+  score: number;
+  level?: number;
+}
+
+export interface UserProfilePayload {
+  userId: number;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  color: string;
+  xp: XPProfile;
+  upgrades: UserUpgrade[];
+  multipliers: UserMultipliers;
+  stats: {
+    totalEnergyContributed: number;
+    citiesInfluenced: number;
+    syncsParticipated: number;
+    memberSince: number;
+  };
+}
+
 export interface ServerToClientEvents {
   'ws:joined': (data: {
     ordinal: number;
@@ -81,6 +152,8 @@ export interface ServerToClientEvents {
     isAuthenticated: boolean;
     authUsername: string | null;
     authAvatarUrl: string | null;
+    xp: XPProfile | null;
+    multipliers: UserMultipliers | null;
   }) => void;
   'ws:pulse': (data: {
     userId: string;
@@ -121,6 +194,12 @@ export interface ServerToClientEvents {
   'ws:narration': (data: { text: string; t: number }) => void;
   'ws:insight': (data: { text: string; t: number }) => void;
   'ws:search-results': (data: { proposals: ProposalPayload[]; total: number }) => void;
+  'ws:xp-update': (data: { xp: number; totalXP: number; level: number; xpToNextLevel: number; leveledUp: boolean }) => void;
+  'ws:profile': (data: UserProfilePayload) => void;
+  'ws:upgrades-list': (data: { upgrades: UpgradeDef[] }) => void;
+  'ws:upgrade-result': (data: { success: boolean; error?: string; upgrade?: UserUpgrade; newXP?: number }) => void;
+  'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
+  'ws:multipliers': (data: UserMultipliers) => void;
 }
 
 export interface ClientToServerEvents {
@@ -131,6 +210,10 @@ export interface ClientToServerEvents {
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;
   'ws:search-proposals': (data: { query: string; status?: string; limit?: number; offset?: number }) => void;
+  'ws:get-profile': () => void;
+  'ws:get-upgrades': () => void;
+  'ws:purchase-upgrade': (data: { upgradeSlug: string }) => void;
+  'ws:get-leaderboard': (data: { type: string; limit?: number }) => void;
 }
 
 export type PulseboardSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

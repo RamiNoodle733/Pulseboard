@@ -10,6 +10,7 @@ import type {
   User,
   WSStats,
   GlobalStatsPayload,
+  UserProfilePayload,
 } from './types.js';
 import { config } from './env.js';
 import {
@@ -34,6 +35,9 @@ import { createWorldStateManager } from './worldState.js';
 import { createEventDirector } from './eventDirector.js';
 import { createNarrator } from './narrator.js';
 import { extractAuthFromSocket, ensureDeviceUser } from './auth.js';
+import { createXPManager, XP_PER_SYNC, XP_PER_ENERGY_UNIT, XP_PER_PRESENCE_MINUTE, type XPManager } from './xp.js';
+import { createUpgradeManager, DEFAULT_MULTIPLIERS, type UpgradeManager } from './upgrades.js';
+import { createLeaderboardManager, type LeaderboardManager } from './leaderboard.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -95,6 +99,11 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
   const fallbackStatsManager = pool ? null : createStatsManager();
   const fallbackProposalManager = pool ? null : createProposalManager();
 
+  // Gamification managers (DB-only)
+  const xpManager: XPManager | null = pool ? createXPManager(pool) : null;
+  const upgradeManager: UpgradeManager | null = pool ? createUpgradeManager(pool) : null;
+  const leaderboardManager: LeaderboardManager | null = pool ? createLeaderboardManager(pool) : null;
+
   // Unified interfaces to abstract over DB vs fallback
   const statsManager = {
     recordPulse(city: string, now: number) {
@@ -143,6 +152,41 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       topCities: statsManager.getTopCities(10),
       pulsesPerMinute: statsManager.getPulsesPerMinute(),
     };
+  }
+
+  // Helper to send XP updates to a socket
+  async function emitXPUpdate(
+    socket: Parameters<Parameters<typeof io.on>[1]>[0],
+    userId: number,
+    result: { newXP: number; newLevel: number; leveledUp: boolean; xpToNextLevel: number },
+  ): Promise<void> {
+    socket.emit('ws:xp-update', {
+      xp: result.newXP,
+      totalXP: result.newXP, // We'll fetch real totalXP
+      level: result.newLevel,
+      xpToNextLevel: result.xpToNextLevel,
+      leveledUp: result.leveledUp,
+    });
+  }
+
+  // Award XP to all synced users
+  async function awardSyncXP(syncedUserIds: string[]): Promise<void> {
+    if (!xpManager) return;
+    for (const uid of syncedUserIds) {
+      const u = users.get(uid);
+      if (u?.dbUserId) {
+        try {
+          const result = await xpManager.awardXP(u.dbUserId, XP_PER_SYNC);
+          // Find the socket for this user to send them the update
+          for (const [, s] of io.sockets.sockets) {
+            if (s.data.userId === uid) {
+              emitXPUpdate(s, u.dbUserId, result);
+              break;
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
   }
 
   function handleStreakResult(
@@ -205,6 +249,9 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
 
       statsManager.recordSync(cities, streak);
       worldState.addResonance(cities);
+
+      // Award XP for sync
+      awardSyncXP(result.syncedUserIds);
 
       io.emit('ws:burst', {
         streak,
@@ -281,6 +328,15 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       console.log(`[event] ${event.type}: ${event.title}`);
     }
   }, 2000);
+
+  // Leaderboard refresh every 60s
+  if (leaderboardManager) {
+    setInterval(() => {
+      leaderboardManager.refreshAll().catch((err) => console.error('[leaderboard] refresh error:', err));
+    }, 60_000);
+    // Initial refresh
+    leaderboardManager.refreshAll().catch(() => {});
+  }
 
   // Narrator (AI narration + insights)
   if (config.narratorEnabled) {
@@ -370,6 +426,8 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         userAgent: ua,
         ip,
         dbUserId,
+        lastXPTick: Date.now(),
+        xpBuffer: 0,
       };
 
       users.set(userId, user);
@@ -380,8 +438,32 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       socket.data.userAgent = ua;
       socket.data.dbUserId = dbUserId;
       socket.data.isAuthenticated = isAuthenticated;
+      socket.data.multipliers = null;
 
-      console.log(`[user] User${userOrdinalCounter} joined with ${color} from ${region || 'unknown'}${isAuthenticated ? ` (${authUsername})` : ''}`);
+      // Load XP profile and multipliers
+      let xpProfile = null;
+      let multipliers = null;
+      if (dbUserId && xpManager && upgradeManager) {
+        try {
+          // Record daily login and award bonus XP
+          const loginResult = await xpManager.recordDailyLogin(dbUserId);
+          if (loginResult.bonusXP > 0) {
+            const xpResult = await xpManager.awardXP(dbUserId, loginResult.bonusXP);
+            // Will send xp-update after joined
+            setTimeout(() => {
+              emitXPUpdate(socket, dbUserId!, xpResult);
+            }, 500);
+          }
+
+          xpProfile = await xpManager.getProfile(dbUserId);
+          multipliers = await upgradeManager.getUserMultipliers(dbUserId);
+          socket.data.multipliers = multipliers;
+        } catch (err) {
+          console.error('[ws] failed to load XP/multipliers:', err);
+        }
+      }
+
+      console.log(`[user] User${userOrdinalCounter} joined with ${color} from ${region || 'unknown'}${isAuthenticated ? ` (${authUsername})` : ''}${xpProfile ? ` Lv.${xpProfile.level}` : ''}`);
 
       const count = connectedCount();
 
@@ -397,7 +479,13 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         isAuthenticated,
         authUsername,
         authAvatarUrl,
+        xp: xpProfile,
+        multipliers,
       });
+
+      if (multipliers) {
+        socket.emit('ws:multipliers', multipliers);
+      }
 
       io.emit('ws:user-count', { count });
 
@@ -460,8 +548,11 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       const px = clamp01(x);
       const py = clamp01(y);
 
+      const energyMult = socket.data.multipliers?.energyMult ?? 1;
+      const energy = 1.0 * energyMult;
+
       statsManager.recordPulse(user.city, now);
-      worldState.addEnergy(user.city, user.lat, user.lon, 1.0);
+      worldState.addEnergy(user.city, user.lat, user.lon, energy);
 
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
@@ -475,7 +566,7 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         y: py,
         region: user.region,
         city: user.city,
-        energy: 1.0,
+        energy,
       });
 
       io.emit('ws:feed', {
@@ -503,13 +594,36 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       user.lastPulse = now;
 
       const speed = Math.sqrt(vx * vx + vy * vy);
-      const energy = 0.3 + clamp01(speed) * 0.7;
+      const baseEnergy = 0.3 + clamp01(speed) * 0.7;
+      const energyMult = socket.data.multipliers?.energyMult ?? 1;
+      const energy = baseEnergy * energyMult;
 
       statsManager.recordPulse(user.city, now);
       worldState.addEnergy(user.city, user.lat, user.lon, energy);
 
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
+
+      // XP from presence: energy-based buffer + time-based ticks
+      if (user.dbUserId && xpManager) {
+        // Energy-based XP: accumulate fractional buffer
+        user.xpBuffer += energy * XP_PER_ENERGY_UNIT;
+        if (user.xpBuffer >= 1) {
+          const xpAmount = Math.floor(user.xpBuffer);
+          user.xpBuffer -= xpAmount;
+          xpManager.awardXP(user.dbUserId, xpAmount).then((xpResult) => {
+            emitXPUpdate(socket, user.dbUserId!, xpResult);
+          }).catch(() => {});
+        }
+
+        // Time-based XP: 1 XP per minute of presence
+        if (now - user.lastXPTick >= 60_000) {
+          user.lastXPTick = now;
+          xpManager.awardXP(user.dbUserId, XP_PER_PRESENCE_MINUTE).then((xpResult) => {
+            emitXPUpdate(socket, user.dbUserId!, xpResult);
+          }).catch(() => {});
+        }
+      }
 
       // NO broadcast of ws:pulse -- presence is silent to other clients
       // The city glows and world state broadcast handle visibility
@@ -827,6 +941,125 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       } catch (err) {
         console.error('[ws] search failed:', err);
         socket.emit('ws:error', { message: 'Search failed' });
+      }
+    });
+
+    // --- Gamification handlers ---
+
+    socket.on('ws:get-profile', async () => {
+      const dbUserId = socket.data.dbUserId;
+      if (!dbUserId || !pool || !xpManager || !upgradeManager) {
+        socket.emit('ws:error', { message: 'Profile requires authentication' });
+        return;
+      }
+
+      try {
+        const xpProfile = await xpManager.getProfile(dbUserId);
+        if (!xpProfile) {
+          socket.emit('ws:error', { message: 'Profile not found' });
+          return;
+        }
+
+        const userUpgrades = await upgradeManager.getUserUpgrades(dbUserId);
+        const multipliers = await upgradeManager.getUserMultipliers(dbUserId);
+
+        const { rows } = await pool.query(
+          'SELECT username, display_name, avatar_url, color, created_at FROM users WHERE id = $1',
+          [dbUserId],
+        );
+        if (rows.length === 0) return;
+        const u = rows[0];
+
+        const profile: UserProfilePayload = {
+          userId: dbUserId,
+          username: u.username,
+          displayName: u.display_name,
+          avatarUrl: u.avatar_url,
+          color: u.color,
+          xp: xpProfile,
+          upgrades: userUpgrades,
+          multipliers,
+          stats: {
+            totalEnergyContributed: Number(xpProfile.totalXP),
+            citiesInfluenced: 0, // Will be richer in Phase 2
+            syncsParticipated: 0,
+            memberSince: new Date(u.created_at).getTime(),
+          },
+        };
+
+        socket.emit('ws:profile', profile);
+      } catch (err) {
+        console.error('[ws] get-profile failed:', err);
+        socket.emit('ws:error', { message: 'Failed to load profile' });
+      }
+    });
+
+    socket.on('ws:get-upgrades', async () => {
+      if (!upgradeManager) {
+        socket.emit('ws:error', { message: 'Upgrades not available' });
+        return;
+      }
+      try {
+        const upgrades = await upgradeManager.getAvailableUpgrades();
+        socket.emit('ws:upgrades-list', { upgrades });
+      } catch (err) {
+        console.error('[ws] get-upgrades failed:', err);
+      }
+    });
+
+    socket.on('ws:purchase-upgrade', async ({ upgradeSlug }) => {
+      const dbUserId = socket.data.dbUserId;
+      if (!dbUserId || !upgradeManager || !xpManager) {
+        socket.emit('ws:error', { message: 'Sign in to purchase upgrades' });
+        return;
+      }
+      if (!socket.data.isAuthenticated) {
+        socket.emit('ws:error', { message: 'Sign in with GitHub to purchase upgrades' });
+        return;
+      }
+
+      try {
+        const result = await upgradeManager.purchaseUpgrade(dbUserId, upgradeSlug, xpManager);
+        if (result.success) {
+          // Refresh multipliers
+          const newMultipliers = await upgradeManager.getUserMultipliers(dbUserId);
+          socket.data.multipliers = newMultipliers;
+          socket.emit('ws:multipliers', newMultipliers);
+
+          // Send updated XP
+          const xpProfile = await xpManager.getProfile(dbUserId);
+          if (xpProfile) {
+            socket.emit('ws:xp-update', {
+              xp: xpProfile.xp,
+              totalXP: xpProfile.totalXP,
+              level: xpProfile.level,
+              xpToNextLevel: xpProfile.xpToNextLevel,
+              leveledUp: false,
+            });
+          }
+        }
+        socket.emit('ws:upgrade-result', {
+          success: result.success,
+          error: result.error,
+          upgrade: result.upgrade,
+          newXP: result.xpSpent ? undefined : undefined,
+        });
+      } catch (err) {
+        console.error('[ws] purchase-upgrade failed:', err);
+        socket.emit('ws:upgrade-result', { success: false, error: 'Purchase failed' });
+      }
+    });
+
+    socket.on('ws:get-leaderboard', async ({ type, limit }) => {
+      if (!leaderboardManager) {
+        socket.emit('ws:error', { message: 'Leaderboard not available' });
+        return;
+      }
+      try {
+        const entries = await leaderboardManager.getBoard(type, limit || 50);
+        socket.emit('ws:leaderboard', { type, entries });
+      } catch (err) {
+        console.error('[ws] get-leaderboard failed:', err);
       }
     });
 

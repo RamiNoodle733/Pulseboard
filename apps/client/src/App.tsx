@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket, getDeviceId } from './socket';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UserProfilePayload, UserMultipliers, UpgradeDef, UserUpgrade, LeaderboardEntry } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import HUD from './components/HUD';
@@ -12,7 +12,11 @@ import CityTicker from './components/CityTicker';
 import PromptBar from './components/PromptBar';
 import ProposalFeed from './components/ProposalFeed';
 import EventBanner from './components/EventBanner';
-import { playPulseHit, playBurstHit, haptic, resumeAudio } from './audio';
+import ProfilePanel from './components/ProfilePanel';
+import UpgradeShop from './components/UpgradeShop';
+import LeaderboardPanel from './components/LeaderboardPanel';
+import LevelUpNotification from './components/LevelUpNotification';
+import { playPulseHit, playBurstHit, playLevelUp, haptic, resumeAudio } from './audio';
 
 const PRESETS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
@@ -36,6 +40,10 @@ export default function App() {
   const error = useStore((s) => s.error);
   const showShareCard = useStore((s) => s.showShareCard);
   const lastShareableSync = useStore((s) => s.lastShareableSync);
+  const showProfile = useStore((s) => s.showProfile);
+  const showUpgradeShop = useStore((s) => s.showUpgradeShop);
+  const showLeaderboard = useStore((s) => s.showLeaderboard);
+  const levelUpNotification = useStore((s) => s.levelUpNotification);
 
   // Handle OAuth token from URL on mount
   useEffect(() => {
@@ -108,13 +116,27 @@ export default function App() {
 
     socket.on(
       'ws:joined',
-      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats, isAuthenticated, authUsername, authAvatarUrl }) => {
+      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats, isAuthenticated, authUsername, authAvatarUrl, xp, multipliers }) => {
         store().setJoined(ordinal, color, streak, best);
         store().setSyncRequired(syncRequired);
         store().setUserCount(count);
         if (city) store().setMyCity(city);
         if (globalStats) store().setGlobalStats(globalStats);
         store().setAuth(isAuthenticated, authUsername, authAvatarUrl);
+
+        // Gamification data from join
+        if (xp) {
+          store().setXPUpdate({
+            xp: xp.xp,
+            totalXP: xp.totalXP,
+            level: xp.level,
+            xpToNextLevel: xp.xpToNextLevel,
+            leveledUp: false,
+          });
+        }
+        if (multipliers) {
+          store().setMultipliers(multipliers);
+        }
       },
     );
 
@@ -209,6 +231,51 @@ export default function App() {
       // Handled by ProposalFeed component directly
     });
 
+    // Gamification events
+    socket.on('ws:xp-update', (data: { xp: number; totalXP: number; level: number; xpToNextLevel: number; leveledUp: boolean }) => {
+      const s = store();
+      const prevLevel = s.level;
+      s.setXPUpdate(data);
+      if (data.leveledUp || data.level > prevLevel) {
+        s.setLevelUpNotification(data.level);
+        playLevelUp(s.soundEnabled);
+        setTimeout(() => useStore.getState().clearLevelUpNotification(), 3500);
+      }
+    });
+
+    socket.on('ws:multipliers', (data: UserMultipliers) => {
+      store().setMultipliers(data);
+    });
+
+    socket.on('ws:profile', (data: UserProfilePayload) => {
+      store().setProfileData(data);
+    });
+
+    socket.on('ws:upgrades-list', ({ upgrades }: { upgrades: UpgradeDef[] }) => {
+      store().setAvailableUpgrades(upgrades);
+    });
+
+    socket.on('ws:upgrade-result', (data: { success: boolean; error?: string; upgrade?: UserUpgrade; newXP?: number }) => {
+      if (data.success && data.upgrade) {
+        const s = store();
+        const current = s.myUpgrades;
+        const idx = current.findIndex((u) => u.upgradeId === data.upgrade!.upgradeId);
+        if (idx >= 0) {
+          const updated = [...current];
+          updated[idx] = data.upgrade;
+          s.setMyUpgrades(updated);
+        } else {
+          s.setMyUpgrades([...current, data.upgrade]);
+        }
+      } else if (data.error) {
+        store().setError(data.error);
+      }
+    });
+
+    socket.on('ws:leaderboard', ({ type, entries }: { type: string; entries: LeaderboardEntry[] }) => {
+      store().setLeaderboard(type, entries);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -230,6 +297,12 @@ export default function App() {
       socket.off('ws:prompt-ack');
       socket.off('ws:prompt-info');
       socket.off('ws:search-results');
+      socket.off('ws:xp-update');
+      socket.off('ws:multipliers');
+      socket.off('ws:profile');
+      socket.off('ws:upgrades-list');
+      socket.off('ws:upgrade-result');
+      socket.off('ws:leaderboard');
     };
   }, []);
 
@@ -342,6 +415,12 @@ export default function App() {
       <ProposalFeed />
       <CityTicker />
       <ContributionBar />
+
+      {/* Gamification overlays */}
+      {showProfile && <ProfilePanel />}
+      {showUpgradeShop && <UpgradeShop />}
+      {showLeaderboard && <LeaderboardPanel />}
+      {levelUpNotification && <LevelUpNotification />}
 
       {error && (
         <div

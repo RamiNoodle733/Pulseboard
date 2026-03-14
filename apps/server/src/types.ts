@@ -1,8 +1,28 @@
 import type { GlobalStatsPayload } from './db/stats.js';
 import type { WorldSnapshot } from './worldState.js';
 import type { WorldEvent } from './eventDirector.js';
+import type { XPProfile } from './xp.js';
+import type { UpgradeDef, UserUpgrade, UserMultipliers } from './upgrades.js';
+import type { LeaderboardEntry } from './leaderboard.js';
 
-export type { GlobalStatsPayload, WorldSnapshot, WorldEvent };
+export type { GlobalStatsPayload, WorldSnapshot, WorldEvent, XPProfile, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry };
+
+export interface UserProfilePayload {
+  userId: number;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  color: string;
+  xp: XPProfile;
+  upgrades: UserUpgrade[];
+  multipliers: UserMultipliers;
+  stats: {
+    totalEnergyContributed: number;
+    citiesInfluenced: number;
+    syncsParticipated: number;
+    memberSince: number;
+  };
+}
 
 export interface User {
   id: string;
@@ -18,6 +38,8 @@ export interface User {
   userAgent: string;
   ip: string;
   dbUserId: number | null;
+  lastXPTick: number;
+  xpBuffer: number;
 }
 
 export interface Pulse {
@@ -74,6 +96,8 @@ export interface ServerToClientEvents {
     isAuthenticated: boolean;
     authUsername: string | null;
     authAvatarUrl: string | null;
+    xp: XPProfile | null;
+    multipliers: UserMultipliers | null;
   }) => void;
   'ws:pulse': (data: {
     userId: string;
@@ -114,6 +138,12 @@ export interface ServerToClientEvents {
   'ws:narration': (data: { text: string; t: number }) => void;
   'ws:insight': (data: { text: string; t: number }) => void;
   'ws:search-results': (data: { proposals: ProposalPayload[]; total: number }) => void;
+  'ws:xp-update': (data: { xp: number; totalXP: number; level: number; xpToNextLevel: number; leveledUp: boolean }) => void;
+  'ws:profile': (data: UserProfilePayload) => void;
+  'ws:upgrades-list': (data: { upgrades: UpgradeDef[] }) => void;
+  'ws:upgrade-result': (data: { success: boolean; error?: string; upgrade?: UserUpgrade; newXP?: number }) => void;
+  'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
+  'ws:multipliers': (data: UserMultipliers) => void;
 }
 
 export interface ClientToServerEvents {
@@ -124,6 +154,10 @@ export interface ClientToServerEvents {
   'ws:submit-prompt': (data: { prompt: string; paymentIntentId?: string }) => void;
   'ws:vote': (data: { proposalId: string; direction: 'up' | 'down' }) => void;
   'ws:search-proposals': (data: { query: string; status?: string; limit?: number; offset?: number }) => void;
+  'ws:get-profile': () => void;
+  'ws:get-upgrades': () => void;
+  'ws:purchase-upgrade': (data: { upgradeSlug: string }) => void;
+  'ws:get-leaderboard': (data: { type: string; limit?: number }) => void;
 }
 
 export interface InterServerEvents {}
@@ -135,6 +169,7 @@ export interface SocketData {
   userAgent: string;
   dbUserId: number | null;
   isAuthenticated: boolean;
+  multipliers: UserMultipliers | null;
 }
 
 export interface WSStats {
