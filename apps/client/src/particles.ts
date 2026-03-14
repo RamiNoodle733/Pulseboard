@@ -9,7 +9,7 @@ export interface Particle {
   maxLife: number;
   color: string;
   size: number;
-  type: 'trail' | 'burst' | 'spark' | 'flow';
+  type: 'trail' | 'burst' | 'spark' | 'flow' | 'sparkle' | 'comet' | 'ring';
 }
 
 export interface Shockwave {
@@ -24,10 +24,23 @@ export class ParticleSystem {
   particles: Particle[] = [];
   shockwaves: Shockwave[] = [];
 
-  /** Emit particles from presence/movement — fewer per call since called more often */
-  emitPresenceTrail(x: number, y: number, color: string, energy: number = 1): void {
-    const count = 2 + Math.floor(energy * 3); // 2-5 based on energy
+  /** Emit particles from presence/movement */
+  emitPresenceTrail(x: number, y: number, color: string, energy: number = 1, trailStyle: number = 0): void {
+    const count = 2 + Math.floor(energy * 3);
     if (this.particles.length + count > MAX_PARTICLES) return;
+
+    if (trailStyle === 1) {
+      this.emitSparkleTrail(x, y, color, energy);
+      return;
+    }
+    if (trailStyle === 2) {
+      this.emitCometTrail(x, y, color, energy);
+      return;
+    }
+    if (trailStyle === 3) {
+      this.emitRingTrail(x, y, color, energy);
+      return;
+    }
 
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -45,7 +58,6 @@ export class ParticleSystem {
       });
     }
 
-    // Flow particles for higher energy (longer-lived, directional)
     if (energy > 0.5 && this.particles.length + 2 <= MAX_PARTICLES) {
       const flowAngle = Math.random() * Math.PI * 2;
       const flowSpeed = 0.1 + energy * 0.3;
@@ -59,6 +71,69 @@ export class ParticleSystem {
         color,
         size: 2 + energy,
         type: 'flow',
+      });
+    }
+  }
+
+  private emitSparkleTrail(x: number, y: number, color: string, energy: number): void {
+    const count = 3 + Math.floor(energy * 4);
+    if (this.particles.length + count > MAX_PARTICLES) return;
+
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 0.3 + Math.random() * 0.8 * energy;
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * 10,
+        y: y + (Math.random() - 0.5) * 10,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        born: Date.now() + Math.random() * 100,
+        maxLife: 300 + Math.random() * 400,
+        color,
+        size: 0.5 + Math.random() * 1.5,
+        type: 'sparkle',
+      });
+    }
+  }
+
+  private emitCometTrail(x: number, y: number, color: string, energy: number): void {
+    const count = 4 + Math.floor(energy * 3);
+    if (this.particles.length + count > MAX_PARTICLES) return;
+
+    for (let i = 0; i < count; i++) {
+      const spreadAngle = (Math.random() - 0.5) * 0.8;
+      const speed = 0.1 + Math.random() * 0.3;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(Math.PI + spreadAngle) * speed,
+        vy: Math.sin(Math.PI + spreadAngle) * speed,
+        born: Date.now(),
+        maxLife: 600 + Math.random() * 400,
+        color,
+        size: 1 + Math.random() * (1 + energy),
+        type: 'comet',
+      });
+    }
+  }
+
+  private emitRingTrail(x: number, y: number, color: string, energy: number): void {
+    const ringCount = 6 + Math.floor(energy * 4);
+    if (this.particles.length + ringCount > MAX_PARTICLES) return;
+
+    const ringRadius = 5 + energy * 8;
+    for (let i = 0; i < ringCount; i++) {
+      const angle = (i / ringCount) * Math.PI * 2;
+      this.particles.push({
+        x: x + Math.cos(angle) * ringRadius,
+        y: y + Math.sin(angle) * ringRadius,
+        vx: Math.cos(angle) * 0.3,
+        vy: Math.sin(angle) * 0.3,
+        born: Date.now(),
+        maxLife: 500 + Math.random() * 300,
+        color,
+        size: 0.8 + Math.random(),
+        type: 'ring',
       });
     }
   }
@@ -91,7 +166,6 @@ export class ParticleSystem {
       }
     }
 
-    // Shockwave from centroid
     if (positions.length >= 2) {
       const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
       const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length;
@@ -127,10 +201,20 @@ export class ParticleSystem {
       p.x += p.vx;
       p.y += p.vy;
       if (p.type === 'spark') p.vy += 0.02;
-      // flow particles drift slowly
       if (p.type === 'flow') {
         p.vx *= 0.995;
         p.vy *= 0.995;
+      } else if (p.type === 'sparkle') {
+        p.vx += (Math.random() - 0.5) * 0.1;
+        p.vy += (Math.random() - 0.5) * 0.1;
+        p.vx *= 0.97;
+        p.vy *= 0.97;
+      } else if (p.type === 'comet') {
+        p.vx *= 0.98;
+        p.vy *= 0.98;
+      } else if (p.type === 'ring') {
+        p.vx *= 0.96;
+        p.vy *= 0.96;
       } else {
         p.vx *= 0.99;
         p.vy *= 0.99;
@@ -153,13 +237,35 @@ export class ParticleSystem {
       const life = 1 - age / p.maxLife;
       if (life <= 0) continue;
 
-      const alpha = p.type === 'flow' ? life * 0.3 : life * 0.7;
+      let alpha: number;
+      if (p.type === 'flow') {
+        alpha = life * 0.3;
+      } else if (p.type === 'sparkle') {
+        const twinkle = Math.sin(age * 0.02 + p.x) * 0.5 + 0.5;
+        alpha = life * 0.8 * twinkle;
+      } else if (p.type === 'comet') {
+        alpha = life * 0.6;
+      } else if (p.type === 'ring') {
+        alpha = life * 0.5;
+      } else {
+        alpha = life * 0.7;
+      }
+
       const a = Math.floor(Math.max(0, Math.min(1, alpha)) * 255)
         .toString(16)
         .padStart(2, '0');
 
       ctx.beginPath();
-      const renderSize = p.type === 'flow' ? p.size * (0.5 + life * 0.5) : p.size * life;
+      let renderSize: number;
+      if (p.type === 'flow') {
+        renderSize = p.size * (0.5 + life * 0.5);
+      } else if (p.type === 'sparkle') {
+        renderSize = p.size * (0.3 + life * 0.7);
+      } else if (p.type === 'ring') {
+        renderSize = p.size * (0.4 + life * 0.6);
+      } else {
+        renderSize = p.size * life;
+      }
       ctx.arc(p.x, p.y, renderSize, 0, Math.PI * 2);
       ctx.fillStyle = p.color + a;
       ctx.fill();
