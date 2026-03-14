@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket, getDeviceId } from './socket';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UserProfilePayload, UserMultipliers, UpgradeDef, UserUpgrade, LeaderboardEntry } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UserProfilePayload, UserMultipliers, UpgradeDef, UserUpgrade, LeaderboardEntry, TerritorySnapshot } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import HUD from './components/HUD';
@@ -276,6 +276,11 @@ export default function App() {
       store().setLeaderboard(type, entries);
     });
 
+    // Territory events
+    socket.on('ws:territory-update', (data: TerritorySnapshot) => {
+      store().setTerritoryData(data);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -303,6 +308,7 @@ export default function App() {
       socket.off('ws:upgrades-list');
       socket.off('ws:upgrade-result');
       socket.off('ws:leaderboard');
+      socket.off('ws:territory-update');
     };
   }, []);
 

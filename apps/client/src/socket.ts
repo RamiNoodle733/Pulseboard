@@ -139,6 +139,23 @@ export interface UserProfilePayload {
   };
 }
 
+export interface TerritorySnapshotEntry {
+  id: number;
+  name: string;
+  type: string;
+  parentId: number | null;
+  energy: number;
+  momentum: number;
+  activeUsers: number;
+}
+
+export interface TerritorySnapshot {
+  territories: TerritorySnapshotEntry[];
+  topCities: Array<{ name: string; energy: number; momentum: number }>;
+  topCountries: Array<{ name: string; energy: number }>;
+  worldEnergy: number;
+}
+
 export interface ServerToClientEvents {
   'ws:joined': (data: {
     ordinal: number;
@@ -200,6 +217,7 @@ export interface ServerToClientEvents {
   'ws:upgrade-result': (data: { success: boolean; error?: string; upgrade?: UserUpgrade; newXP?: number }) => void;
   'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
   'ws:multipliers': (data: UserMultipliers) => void;
+  'ws:territory-update': (data: TerritorySnapshot) => void;
 }
 
 export interface ClientToServerEvents {

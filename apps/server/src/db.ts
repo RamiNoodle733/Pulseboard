@@ -171,6 +171,55 @@ INSERT INTO upgrades (slug, name, description, category, max_level, base_cost, c
 ON CONFLICT (slug) DO NOTHING;
 `,
   },
+  {
+    name: '003_territories.sql',
+    sql: `
+-- Territory hierarchy: world → country → state → city
+CREATE TABLE IF NOT EXISTS territories (
+  id              SERIAL PRIMARY KEY,
+  name            VARCHAR(255) NOT NULL,
+  type            VARCHAR(20) NOT NULL CHECK (type IN ('world', 'country', 'state', 'city')),
+  parent_id       INTEGER REFERENCES territories(id) ON DELETE SET NULL,
+  lat             DOUBLE PRECISION DEFAULT 0,
+  lon             DOUBLE PRECISION DEFAULT 0,
+  current_energy  DOUBLE PRECISION NOT NULL DEFAULT 0,
+  momentum        DOUBLE PRECISION NOT NULL DEFAULT 0,
+  daily_energy    DOUBLE PRECISION NOT NULL DEFAULT 0,
+  all_time_energy DOUBLE PRECISION NOT NULL DEFAULT 0,
+  active_users    INTEGER NOT NULL DEFAULT 0,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (name, type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_territories_type ON territories(type);
+CREATE INDEX IF NOT EXISTS idx_territories_parent ON territories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_territories_energy ON territories(current_energy DESC);
+
+-- Presence sessions for tracking continuous engagement
+CREATE TABLE IF NOT EXISTS presence_sessions (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at    TIMESTAMPTZ,
+  city        VARCHAR(255),
+  total_energy DOUBLE PRECISION NOT NULL DEFAULT 0,
+  xp_awarded  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_presence_sessions_user ON presence_sessions(user_id, started_at DESC);
+
+-- Add city/lat/lon to users if not present
+DO $$ BEGIN
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS city VARCHAR(255);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Seed the root "World" territory
+INSERT INTO territories (name, type) VALUES ('World', 'world') ON CONFLICT (name, type) DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<number> {

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, UserProfilePayload } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, UserProfilePayload, TerritorySnapshot } from './socket';
 
 export interface Pulse {
   id: string;
@@ -100,6 +100,9 @@ interface Store {
   narration: string | null;
   insight: string | null;
 
+  // Territory state
+  territoryData: TerritorySnapshot | null;
+
   // Overlay state
   showShareCard: boolean;
   lastShareableSync: SyncEvent | null;
@@ -173,6 +176,7 @@ interface Store {
   setCurrentEvent: (event: WorldEvent | null) => void;
   setNarration: (text: string | null) => void;
   setInsight: (text: string | null) => void;
+  setTerritoryData: (data: TerritorySnapshot) => void;
 
   setProposals: (proposals: ProposalPayload[]) => void;
   upsertProposal: (proposal: ProposalPayload) => void;
@@ -256,6 +260,8 @@ export const useStore = create<Store>((set) => ({
   currentEvent: null,
   narration: null,
   insight: null,
+
+  territoryData: null,
 
   showShareCard: false,
   lastShareableSync: null,
@@ -409,6 +415,7 @@ export const useStore = create<Store>((set) => ({
   setCurrentEvent: (event) => set({ currentEvent: event }),
   setNarration: (text) => set({ narration: text }),
   setInsight: (text) => set({ insight: text }),
+  setTerritoryData: (data) => set({ territoryData: data }),
 
   setProposals: (proposals) => set({ proposals }),
 

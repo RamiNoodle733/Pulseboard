@@ -38,6 +38,7 @@ import { extractAuthFromSocket, ensureDeviceUser } from './auth.js';
 import { createXPManager, XP_PER_SYNC, XP_PER_ENERGY_UNIT, XP_PER_PRESENCE_MINUTE, type XPManager } from './xp.js';
 import { createUpgradeManager, DEFAULT_MULTIPLIERS, type UpgradeManager } from './upgrades.js';
 import { createLeaderboardManager, type LeaderboardManager } from './leaderboard.js';
+import { createTerritoryManager, type TerritoryManager } from './territory.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -103,6 +104,9 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
   const xpManager: XPManager | null = pool ? createXPManager(pool) : null;
   const upgradeManager: UpgradeManager | null = pool ? createUpgradeManager(pool) : null;
   const leaderboardManager: LeaderboardManager | null = pool ? createLeaderboardManager(pool) : null;
+
+  // Territory manager (DB-only)
+  const territoryManager: TerritoryManager | null = pool ? createTerritoryManager(pool) : null;
 
   // Unified interfaces to abstract over DB vs fallback
   const statsManager = {
@@ -338,6 +342,18 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
     leaderboardManager.refreshAll().catch(() => {});
   }
 
+  // Territory tick every 2s + broadcast every 5s
+  if (territoryManager) {
+    setInterval(() => {
+      territoryManager.tick().catch((err) => console.error('[territory] tick error:', err));
+    }, 2000);
+
+    setInterval(() => {
+      const snapshot = territoryManager.getSnapshot();
+      io.emit('ws:territory-update', snapshot);
+    }, 5000);
+  }
+
   // Narrator (AI narration + insights)
   if (config.narratorEnabled) {
     setInterval(async () => {
@@ -428,9 +444,45 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         dbUserId,
         lastXPTick: Date.now(),
         xpBuffer: 0,
+        territoryId: 0,
+        presenceSessionId: null,
+        presenceEnergy: 0,
       };
 
       users.set(userId, user);
+
+      // Create territory hierarchy and presence session
+      if (territoryManager && geo.city && geo.country) {
+        try {
+          const tId = await territoryManager.ensureHierarchy(
+            geo.city, geo.country, geo.region || '', geo.lat, geo.lon,
+          );
+          user.territoryId = tId;
+        } catch (err) {
+          console.error('[ws] territory hierarchy error:', err);
+        }
+      }
+
+      // Update user location in DB
+      if (pool && dbUserId && geo.city) {
+        pool.query(
+          'UPDATE users SET city = $1, lat = $2, lon = $3, last_seen_at = NOW() WHERE id = $4',
+          [geo.city, geo.lat, geo.lon, dbUserId],
+        ).catch(() => {});
+      }
+
+      // Start presence session
+      if (pool && dbUserId) {
+        try {
+          const { rows: sessRows } = await pool.query(
+            'INSERT INTO presence_sessions (user_id, city) VALUES ($1, $2) RETURNING id',
+            [dbUserId, geo.city || null],
+          );
+          if (sessRows.length > 0) {
+            user.presenceSessionId = sessRows[0].id;
+          }
+        } catch { /* ignore */ }
+      }
 
       socket.data.userId = userId;
       socket.data.ordinal = userOrdinalCounter;
@@ -600,6 +652,13 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
 
       statsManager.recordPulse(user.city, now);
       worldState.addEnergy(user.city, user.lat, user.lon, energy);
+
+      // Feed territory system
+      if (territoryManager && user.territoryId) {
+        const cityEnergyMult = socket.data.multipliers?.cityEnergyMult ?? 1;
+        territoryManager.addEnergy(user.territoryId, energy * cityEnergyMult);
+        user.presenceEnergy += energy;
+      }
 
       const count = connectedCount();
       const result = streakManager.addPulse(userId, now, count);
@@ -1069,6 +1128,14 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         const user = users.get(userId);
         if (user) {
           console.log(`[user] User${user.ordinal} disconnected`);
+
+          // End presence session
+          if (pool && user.presenceSessionId) {
+            pool.query(
+              'UPDATE presence_sessions SET ended_at = NOW(), total_energy = $1 WHERE id = $2',
+              [user.presenceEnergy, user.presenceSessionId],
+            ).catch(() => {});
+          }
 
           notifyDiscord('user_leave', {
             ordinal: user.ordinal,

@@ -4,8 +4,9 @@ import type { WorldEvent } from './eventDirector.js';
 import type { XPProfile } from './xp.js';
 import type { UpgradeDef, UserUpgrade, UserMultipliers } from './upgrades.js';
 import type { LeaderboardEntry } from './leaderboard.js';
+import type { TerritorySnapshot } from './territory.js';
 
-export type { GlobalStatsPayload, WorldSnapshot, WorldEvent, XPProfile, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry };
+export type { GlobalStatsPayload, WorldSnapshot, WorldEvent, XPProfile, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, TerritorySnapshot };
 
 export interface UserProfilePayload {
   userId: number;
@@ -40,6 +41,9 @@ export interface User {
   dbUserId: number | null;
   lastXPTick: number;
   xpBuffer: number;
+  territoryId: number;
+  presenceSessionId: number | null;
+  presenceEnergy: number;
 }
 
 export interface Pulse {
@@ -144,6 +148,7 @@ export interface ServerToClientEvents {
   'ws:upgrade-result': (data: { success: boolean; error?: string; upgrade?: UserUpgrade; newXP?: number }) => void;
   'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
   'ws:multipliers': (data: UserMultipliers) => void;
+  'ws:territory-update': (data: TerritorySnapshot) => void;
 }
 
 export interface ClientToServerEvents {
