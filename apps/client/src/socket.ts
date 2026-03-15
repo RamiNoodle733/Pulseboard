@@ -100,6 +100,15 @@ export interface UserUpgrade {
   maxLevel: number;
 }
 
+export interface UserAchievement {
+  achievementId: number;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  earnedAt: number;
+}
+
 export interface UserMultipliers {
   pulseRateMult: number;
   energyMult: number;
@@ -218,6 +227,10 @@ export interface ServerToClientEvents {
   'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
   'ws:multipliers': (data: UserMultipliers) => void;
   'ws:territory-update': (data: TerritorySnapshot) => void;
+  'ws:achievement': (data: UserAchievement) => void;
+  'ws:achievement-list': (data: { achievements: UserAchievement[] }) => void;
+  'ws:event-history': (data: { events: Array<{ id: string; type: string; title: string; startedAt: number }> }) => void;
+  'ws:summary': (data: { text: string; period: string; generatedAt: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -232,6 +245,8 @@ export interface ClientToServerEvents {
   'ws:get-upgrades': () => void;
   'ws:purchase-upgrade': (data: { upgradeSlug: string }) => void;
   'ws:get-leaderboard': (data: { type: string; limit?: number }) => void;
+  'ws:get-achievements': () => void;
+  'ws:get-event-history': (data: { limit?: number }) => void;
 }
 
 export type PulseboardSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

@@ -39,6 +39,8 @@ import { createXPManager, XP_PER_SYNC, XP_PER_ENERGY_UNIT, XP_PER_PRESENCE_MINUT
 import { createUpgradeManager, DEFAULT_MULTIPLIERS, type UpgradeManager } from './upgrades.js';
 import { createLeaderboardManager, type LeaderboardManager } from './leaderboard.js';
 import { createTerritoryManager, type TerritoryManager } from './territory.js';
+import { createAchievementManager, type AchievementManager, type AchievementContext } from './achievements.js';
+import { createSummarizer, type SummarizerManager } from './summarizer.js';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
@@ -90,7 +92,7 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
   let userOrdinalCounter = 0;
   const streakManager = createStreakManager();
   const worldState = createWorldStateManager();
-  const eventDirector = createEventDirector();
+  const eventDirector = createEventDirector(pool);
   const narrator = createNarrator();
 
   // Use DB-backed managers if pool available, else fall back to JSON-file managers
@@ -107,6 +109,12 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
 
   // Territory manager (DB-only)
   const territoryManager: TerritoryManager | null = pool ? createTerritoryManager(pool) : null;
+
+  // Achievement manager (DB-only)
+  const achievementManager: AchievementManager | null = pool ? createAchievementManager(pool) : null;
+
+  // Summarizer manager (DB + AI)
+  const summarizerManager: SummarizerManager | null = pool ? createSummarizer(pool) : null;
 
   // Unified interfaces to abstract over DB vs fallback
   const statsManager = {
@@ -174,7 +182,7 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
   }
 
   // Award XP to all synced users
-  async function awardSyncXP(syncedUserIds: string[]): Promise<void> {
+  async function awardSyncXP(syncedUserIds: string[], streak: number): Promise<void> {
     if (!xpManager) return;
     for (const uid of syncedUserIds) {
       const u = users.get(uid);
@@ -185,12 +193,39 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
           for (const [, s] of io.sockets.sockets) {
             if (s.data.userId === uid) {
               emitXPUpdate(s, u.dbUserId, result);
+              // Achievement check for sync + streak + level
+              checkAchievements(s, u.dbUserId, {
+                totalSyncs: 1,
+                currentStreak: streak,
+                level: result.newLevel,
+              });
               break;
             }
           }
         } catch { /* ignore */ }
       }
     }
+  }
+
+  // Check and award achievements for a user
+  async function checkAchievements(
+    socket: Parameters<Parameters<typeof io.on>[1]>[0],
+    dbUserId: number,
+    ctx: AchievementContext,
+  ): Promise<void> {
+    if (!achievementManager || !xpManager) return;
+    try {
+      const earned = await achievementManager.checkAndAward(dbUserId, ctx);
+      if (earned) {
+        // Award bonus XP
+        const def = achievementManager.getDefinitions().find((d) => d.slug === earned.slug);
+        if (def && def.xpReward > 0) {
+          const xpResult = await xpManager.awardXP(dbUserId, def.xpReward);
+          emitXPUpdate(socket, dbUserId, xpResult);
+        }
+        socket.emit('ws:achievement', earned);
+      }
+    } catch { /* ignore */ }
   }
 
   function handleStreakResult(
@@ -255,7 +290,7 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       worldState.addResonance(cities);
 
       // Award XP for sync
-      awardSyncXP(result.syncedUserIds);
+      awardSyncXP(result.syncedUserIds, streak);
 
       io.emit('ws:burst', {
         streak,
@@ -322,10 +357,12 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
     const snapshot = worldState.getSnapshot();
     io.emit('ws:world-state', snapshot);
 
+    const tSnap = territoryManager ? territoryManager.getSnapshot() : null;
     const event = eventDirector.check(
       snapshot,
       streakManager.getCurrentStreak(),
       streakManager.getBestStreak(),
+      tSnap,
     );
     if (event) {
       io.emit('ws:world-event', event);
@@ -376,6 +413,23 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         io.emit('ws:insight', insight);
       }
     }, 300_000);
+  }
+
+  // Hourly AI summarizer
+  if (summarizerManager && config.narratorEnabled) {
+    setInterval(async () => {
+      const snapshot = worldState.getSnapshot();
+      const count = connectedCount();
+      const summary = await summarizerManager.generateHourlySummary(snapshot, count);
+      if (summary) {
+        io.emit('ws:summary', summary);
+      }
+    }, 3600_000); // check every hour (summarizer has internal dedup)
+  }
+
+  // Load achievement definitions eagerly
+  if (achievementManager) {
+    achievementManager.loadDefinitions().catch(() => {});
   }
 
   io.on('connection', (socket) => {
@@ -510,6 +564,16 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
           xpProfile = await xpManager.getProfile(dbUserId);
           multipliers = await upgradeManager.getUserMultipliers(dbUserId);
           socket.data.multipliers = multipliers;
+
+          // Check login streak achievement
+          if (xpProfile && loginResult.streak > 0) {
+            setTimeout(() => {
+              checkAchievements(socket, dbUserId!, {
+                loginStreak: loginResult.streak,
+                level: xpProfile!.level,
+              });
+            }, 1000);
+          }
         } catch (err) {
           console.error('[ws] failed to load XP/multipliers:', err);
         }
@@ -630,6 +694,11 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
       });
 
       handleStreakResult(result, user, count, true);
+
+      // Achievement check for pulse
+      if (user.dbUserId) {
+        checkAchievements(socket, user.dbUserId, { totalPulses: 1 });
+      }
     });
 
     socket.on('ws:presence', async ({ x, y, vx, vy }) => {
@@ -672,6 +741,12 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
           user.xpBuffer -= xpAmount;
           xpManager.awardXP(user.dbUserId, xpAmount).then((xpResult) => {
             emitXPUpdate(socket, user.dbUserId!, xpResult);
+            if (xpResult.leveledUp) {
+              checkAchievements(socket, user.dbUserId!, {
+                level: xpResult.newLevel,
+                totalEnergy: user.presenceEnergy,
+              });
+            }
           }).catch(() => {});
         }
 
@@ -1119,6 +1194,29 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         socket.emit('ws:leaderboard', { type, entries });
       } catch (err) {
         console.error('[ws] get-leaderboard failed:', err);
+      }
+    });
+
+    socket.on('ws:get-achievements', async () => {
+      const dbUserId = socket.data.dbUserId;
+      if (!dbUserId || !achievementManager) {
+        socket.emit('ws:error', { message: 'Achievements not available' });
+        return;
+      }
+      try {
+        const achievements = await achievementManager.getUserAchievements(dbUserId);
+        socket.emit('ws:achievement-list', { achievements });
+      } catch (err) {
+        console.error('[ws] get-achievements failed:', err);
+      }
+    });
+
+    socket.on('ws:get-event-history', async ({ limit }) => {
+      try {
+        const events = await eventDirector.getRecentEvents(limit || 20);
+        socket.emit('ws:event-history', { events });
+      } catch (err) {
+        console.error('[ws] get-event-history failed:', err);
       }
     });
 

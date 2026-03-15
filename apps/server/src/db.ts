@@ -220,6 +220,75 @@ END $$;
 INSERT INTO territories (name, type) VALUES ('World', 'world') ON CONFLICT (name, type) DO NOTHING;
 `,
   },
+  {
+    name: '004_events_achievements.sql',
+    sql: `
+-- Event history: persist world events
+CREATE TABLE IF NOT EXISTS event_history (
+  id          SERIAL PRIMARY KEY,
+  event_id    VARCHAR(50) NOT NULL,
+  type        VARCHAR(50) NOT NULL,
+  title       VARCHAR(255) NOT NULL,
+  cities      TEXT[] DEFAULT '{}',
+  intensity   DOUBLE PRECISION NOT NULL DEFAULT 0,
+  duration    INTEGER NOT NULL DEFAULT 0,
+  started_at  TIMESTAMPTZ NOT NULL,
+  ended_at    TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_history_type ON event_history(type);
+CREATE INDEX IF NOT EXISTS idx_event_history_started ON event_history(started_at DESC);
+
+-- Daily summaries: AI-generated daily recaps
+CREATE TABLE IF NOT EXISTS daily_summaries (
+  id          SERIAL PRIMARY KEY,
+  period      VARCHAR(20) NOT NULL DEFAULT 'daily',
+  summary     TEXT NOT NULL,
+  stats       JSONB DEFAULT '{}',
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (period, generated_at::date)
+);
+
+-- Achievement definitions (seeded below)
+CREATE TABLE IF NOT EXISTS achievements (
+  id          SERIAL PRIMARY KEY,
+  slug        VARCHAR(50) NOT NULL UNIQUE,
+  name        VARCHAR(100) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  icon        VARCHAR(10) NOT NULL DEFAULT '',
+  xp_reward   INTEGER NOT NULL DEFAULT 0,
+  category    VARCHAR(30) NOT NULL DEFAULT 'general',
+  threshold   INTEGER NOT NULL DEFAULT 1,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- User achievements: earned achievements per user
+CREATE TABLE IF NOT EXISTS user_achievements (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  achievement_id  INTEGER NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+  earned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, achievement_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id);
+
+-- Seed 10 achievements
+INSERT INTO achievements (slug, name, description, icon, xp_reward, category, threshold) VALUES
+  ('first_pulse',    'First Pulse',       'Send your first pulse into the field',   '1',  10,   'milestone',  1),
+  ('first_sync',     'First Resonance',   'Participate in your first sync',         '2',  25,   'milestone',  1),
+  ('level_5',        'Rising Star',       'Reach level 5',                          '3',  50,   'milestone',  5),
+  ('level_10',       'Veteran',           'Reach level 10',                         '4',  100,  'milestone',  10),
+  ('streak_10',      'Streak Master',     'Achieve a 10x resonance streak',         '5',  75,   'streak',     10),
+  ('streak_25',      'Chain Lightning',   'Achieve a 25x resonance streak',         '6',  200,  'streak',     25),
+  ('cities_5',       'Globe Trotter',     'Contribute energy in 5 different cities', '7', 50,   'exploration', 5),
+  ('energy_1000',    'Power Plant',       'Contribute 1000 total energy',           '8',  100,  'energy',     1000),
+  ('energy_10000',   'Supernova',         'Contribute 10000 total energy',          '9',  500,  'energy',     10000),
+  ('login_7',        'Dedicated',         'Log in 7 days in a row',                '10',  150,  'loyalty',    7)
+ON CONFLICT (slug) DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<number> {

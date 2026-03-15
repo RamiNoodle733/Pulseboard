@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { initSocket, getSocket, getDeviceId } from './socket';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UserProfilePayload, UserMultipliers, UpgradeDef, UserUpgrade, LeaderboardEntry, TerritorySnapshot } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UserProfilePayload, UserMultipliers, UpgradeDef, UserUpgrade, LeaderboardEntry, TerritorySnapshot, UserAchievement } from './socket';
 import { useStore } from './store';
 import Canvas from './Canvas';
 import HUD from './components/HUD';
@@ -16,6 +16,8 @@ import ProfilePanel from './components/ProfilePanel';
 import UpgradeShop from './components/UpgradeShop';
 import LeaderboardPanel from './components/LeaderboardPanel';
 import LevelUpNotification from './components/LevelUpNotification';
+import AchievementToast from './components/AchievementToast';
+import OnboardingOverlay from './components/OnboardingOverlay';
 import { playPulseHit, playBurstHit, playLevelUp, haptic, resumeAudio } from './audio';
 
 const PRESETS = [
@@ -44,6 +46,8 @@ export default function App() {
   const showUpgradeShop = useStore((s) => s.showUpgradeShop);
   const showLeaderboard = useStore((s) => s.showLeaderboard);
   const levelUpNotification = useStore((s) => s.levelUpNotification);
+  const achievementToast = useStore((s) => s.achievementToast);
+  const showOnboarding = useStore((s) => s.showOnboarding);
 
   // Handle OAuth token from URL on mount
   useEffect(() => {
@@ -281,6 +285,16 @@ export default function App() {
       store().setTerritoryData(data);
     });
 
+    // Achievement events
+    socket.on('ws:achievement', (data: UserAchievement) => {
+      store().addAchievement(data);
+      setTimeout(() => useStore.getState().clearAchievementToast(), 5000);
+    });
+
+    socket.on('ws:achievement-list', ({ achievements }: { achievements: UserAchievement[] }) => {
+      store().setAchievements(achievements);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -309,6 +323,8 @@ export default function App() {
       socket.off('ws:upgrade-result');
       socket.off('ws:leaderboard');
       socket.off('ws:territory-update');
+      socket.off('ws:achievement');
+      socket.off('ws:achievement-list');
     };
   }, []);
 
@@ -427,6 +443,8 @@ export default function App() {
       {showUpgradeShop && <UpgradeShop />}
       {showLeaderboard && <LeaderboardPanel />}
       {levelUpNotification && <LevelUpNotification />}
+      {achievementToast && <AchievementToast />}
+      {showOnboarding && <OnboardingOverlay />}
 
       {error && (
         <div

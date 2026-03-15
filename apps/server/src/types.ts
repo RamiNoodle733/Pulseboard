@@ -5,8 +5,9 @@ import type { XPProfile } from './xp.js';
 import type { UpgradeDef, UserUpgrade, UserMultipliers } from './upgrades.js';
 import type { LeaderboardEntry } from './leaderboard.js';
 import type { TerritorySnapshot } from './territory.js';
+import type { AchievementDef, UserAchievement } from './achievements.js';
 
-export type { GlobalStatsPayload, WorldSnapshot, WorldEvent, XPProfile, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, TerritorySnapshot };
+export type { GlobalStatsPayload, WorldSnapshot, WorldEvent, XPProfile, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, TerritorySnapshot, AchievementDef, UserAchievement };
 
 export interface UserProfilePayload {
   userId: number;
@@ -149,6 +150,10 @@ export interface ServerToClientEvents {
   'ws:leaderboard': (data: { type: string; entries: LeaderboardEntry[] }) => void;
   'ws:multipliers': (data: UserMultipliers) => void;
   'ws:territory-update': (data: TerritorySnapshot) => void;
+  'ws:achievement': (data: UserAchievement) => void;
+  'ws:achievement-list': (data: { achievements: UserAchievement[] }) => void;
+  'ws:event-history': (data: { events: Array<{ id: string; type: string; title: string; startedAt: number }> }) => void;
+  'ws:summary': (data: { text: string; period: string; generatedAt: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -163,6 +168,8 @@ export interface ClientToServerEvents {
   'ws:get-upgrades': () => void;
   'ws:purchase-upgrade': (data: { upgradeSlug: string }) => void;
   'ws:get-leaderboard': (data: { type: string; limit?: number }) => void;
+  'ws:get-achievements': () => void;
+  'ws:get-event-history': (data: { limit?: number }) => void;
 }
 
 export interface InterServerEvents {}

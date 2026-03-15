@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, UserProfilePayload, TerritorySnapshot } from './socket';
+import type { FeedEntry, GlobalStatsPayload, ProposalPayload, WorldSnapshot, WorldEvent, UpgradeDef, UserUpgrade, UserMultipliers, LeaderboardEntry, UserProfilePayload, TerritorySnapshot, UserAchievement } from './socket';
 
 export interface Pulse {
   id: string;
@@ -140,6 +140,13 @@ interface Store {
   showLeaderboard: boolean;
   levelUpNotification: { level: number; t: number } | null;
 
+  // Achievements
+  achievements: UserAchievement[];
+  achievementToast: UserAchievement | null;
+
+  // Onboarding
+  showOnboarding: boolean;
+
   // Actions
   setJoined: (ordinal: number, color: string, streak: number, bestStreak: number) => void;
   setConnected: (connected: boolean) => void;
@@ -203,6 +210,15 @@ interface Store {
   setShowLeaderboard: (show: boolean) => void;
   setLevelUpNotification: (level: number) => void;
   clearLevelUpNotification: () => void;
+
+  // Achievement actions
+  setAchievements: (a: UserAchievement[]) => void;
+  addAchievement: (a: UserAchievement) => void;
+  clearAchievementToast: () => void;
+
+  // Onboarding actions
+  setShowOnboarding: (show: boolean) => void;
+  markOnboardingSeen: () => void;
 }
 
 const MAX_FEED = 30;
@@ -295,6 +311,13 @@ export const useStore = create<Store>((set) => ({
   showUpgradeShop: false,
   showLeaderboard: false,
   levelUpNotification: null,
+
+  // Achievements defaults
+  achievements: [],
+  achievementToast: null,
+
+  // Onboarding
+  showOnboarding: !localStorage.getItem('pulseboard:onboarding-seen'),
 
   setJoined: (ordinal, color, streak, bestStreak) =>
     set({ joined: true, myOrdinal: ordinal, myColor: color, currentStreak: streak, bestStreak, sessionStartTime: Date.now() }),
@@ -483,4 +506,23 @@ export const useStore = create<Store>((set) => ({
     set({ levelUpNotification: { level, t: Date.now() } }),
 
   clearLevelUpNotification: () => set({ levelUpNotification: null }),
+
+  // Achievement actions
+  setAchievements: (a) => set({ achievements: a }),
+
+  addAchievement: (a) =>
+    set((state) => ({
+      achievements: [a, ...state.achievements],
+      achievementToast: a,
+    })),
+
+  clearAchievementToast: () => set({ achievementToast: null }),
+
+  // Onboarding
+  setShowOnboarding: (show) => set({ showOnboarding: show }),
+
+  markOnboardingSeen: () => {
+    localStorage.setItem('pulseboard:onboarding-seen', '1');
+    set({ showOnboarding: false });
+  },
 }));
