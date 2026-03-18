@@ -591,8 +591,6 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
         syncRequired: streakManager.getState(count).requiredUsers,
         userCount: count,
         city: geo.city,
-        lat: geo.lat,
-        lon: geo.lon,
         globalStats: buildGlobalStats(),
         isAuthenticated,
         authUsername,

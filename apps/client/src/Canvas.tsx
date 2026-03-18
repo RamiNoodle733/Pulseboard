@@ -61,8 +61,6 @@ export default function Canvas({ width, height }: CanvasProps) {
   const ripplesRef = useRef<Ripple[]>([]);
   const territoryRef = useRef<TerritorySnapshot | null>(null);
   const myCityRef = useRef('');
-  const myLatRef = useRef(0);
-  const myLonRef = useRef(0);
 
   // Subscribe to store changes via refs
   useEffect(() => {
@@ -76,8 +74,6 @@ export default function Canvas({ width, height }: CanvasProps) {
       ripplesRef.current = state.ripples;
       territoryRef.current = state.territoryData;
       myCityRef.current = state.myCity;
-      myLatRef.current = state.myLat;
-      myLonRef.current = state.myLon;
 
       // Emit trail particles for newly added pulses
       if (state.pulses.length > prevCount) {
@@ -224,18 +220,8 @@ export default function Canvas({ width, height }: CanvasProps) {
 
       // My city pulsing ring marker
       const myCity = myCityRef.current;
-      const myLat = myLatRef.current;
-      const myLon = myLonRef.current;
-
-      // Use direct lat/lon if available, otherwise fall back to city lookup
-      let myPos: { x: number; y: number } | null = null;
-      if (myLat !== 0 || myLon !== 0) {
-        myPos = geoToCanvas(myLat, myLon, width, height);
-      } else if (myCity) {
-        myPos = getCityCanvasPos(myCity, width, height);
-      }
-
-      if (myPos) {
+      if (myCity) {
+        const myPos = getCityCanvasPos(myCity, width, height);
         const pulse = Math.sin(now * 0.003) * 0.5 + 0.5;
         const ringRadius = 8 + pulse * 6;
         ctx.beginPath();

@@ -44,8 +44,6 @@ interface Store {
   myUserId: string | null;
   myRegion: string;
   myCity: string;
-  myLat: number;
-  myLon: number;
   connected: boolean;
   audioUnlocked: boolean;
 
@@ -166,7 +164,6 @@ interface Store {
   setMyUserId: (userId: string) => void;
   setMyRegion: (region: string) => void;
   setMyCity: (city: string) => void;
-  setMyLocation: (lat: number, lon: number) => void;
   incrementPulsesSent: () => void;
   incrementPulsesReceived: () => void;
   incrementSyncs: () => void;
@@ -234,8 +231,6 @@ export const useStore = create<Store>((set) => ({
   myUserId: null,
   myRegion: '',
   myCity: '',
-  myLat: 0,
-  myLon: 0,
   connected: false,
   audioUnlocked: false,
 
@@ -377,7 +372,6 @@ export const useStore = create<Store>((set) => ({
   setMyUserId: (userId) => set({ myUserId: userId }),
   setMyRegion: (region) => set({ myRegion: region }),
   setMyCity: (city) => set({ myCity: city }),
-  setMyLocation: (lat, lon) => set({ myLat: lat, myLon: lon }),
 
   incrementPulsesSent: () =>
     set((state) => ({ totalPulsesSent: state.totalPulsesSent + 1 })),
