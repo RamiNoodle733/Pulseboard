@@ -342,6 +342,31 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
     }
   }, 500);
 
+  // Ambient pulses: emit low-energy pulses periodically from idle users
+  setInterval(() => {
+    const now = Date.now();
+    for (const user of users.values()) {
+      // Emit a low-energy ambient pulse (0.2 energy)
+      // Use lat/lon to generate canvas position (normalized 0-1)
+      const px = clamp01((user.lon + 180) / 360);
+      const latRad = (Math.max(-85, Math.min(85, user.lat)) * Math.PI) / 180;
+      const mercY = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
+      const py = clamp01(0.5 - mercY / (2 * Math.PI));
+
+      io.emit('ws:pulse', {
+        userId: user.id,
+        color: user.color,
+        t: now,
+        ordinal: user.ordinal,
+        x: px,
+        y: py,
+        region: user.region,
+        city: user.city,
+        energy: 0.2, // Low ambient energy
+      });
+    }
+  }, 8000); // Emit every 8 seconds per user
+
   // broadcast global stats every 10 seconds
   setInterval(() => {
     io.emit('ws:global-stats', buildGlobalStats());
