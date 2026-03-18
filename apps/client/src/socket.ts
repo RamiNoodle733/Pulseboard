@@ -174,6 +174,8 @@ export interface ServerToClientEvents {
     syncRequired: number;
     userCount: number;
     city: string;
+    lat: number;
+    lon: number;
     globalStats: GlobalStatsPayload;
     isAuthenticated: boolean;
     authUsername: string | null;

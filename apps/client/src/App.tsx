@@ -120,11 +120,14 @@ export default function App() {
 
     socket.on(
       'ws:joined',
-      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, globalStats, isAuthenticated, authUsername, authAvatarUrl, xp, multipliers }) => {
+      ({ ordinal, color, streak, bestStreak: best, syncRequired, userCount: count, city, lat, lon, globalStats, isAuthenticated, authUsername, authAvatarUrl, xp, multipliers }) => {
         store().setJoined(ordinal, color, streak, best);
         store().setSyncRequired(syncRequired);
         store().setUserCount(count);
         if (city) store().setMyCity(city);
+        if (typeof lat === 'number' && typeof lon === 'number') {
+          store().setMyLocation(lat, lon);
+        }
         if (globalStats) store().setGlobalStats(globalStats);
         store().setAuth(isAuthenticated, authUsername, authAvatarUrl);
 
