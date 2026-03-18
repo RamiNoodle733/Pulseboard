@@ -16,7 +16,6 @@ interface Config {
   githubRepo: string | null;
   githubDefaultBranch: string;
   stripeSecretKey: string | null;
-  stripePublishableKey: string | null;
   promptFreeLimit: number;
   promptFreeLimitWindowMs: number;
   promptRatePoints: number;
@@ -72,7 +71,6 @@ export const config: Readonly<Config> = Object.freeze({
   githubRepo: process.env.GITHUB_REPO || null,
   githubDefaultBranch: str('GITHUB_DEFAULT_BRANCH', 'main'),
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || null,
-  stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || null,
   promptFreeLimit: num('PROMPT_FREE_LIMIT', 1),
   promptFreeLimitWindowMs: num('PROMPT_FREE_LIMIT_WINDOW_MS', 86400000),
   promptRatePoints: num('PROMPT_RATE_POINTS', 3),

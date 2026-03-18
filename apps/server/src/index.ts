@@ -7,67 +7,38 @@ import { registerAuthRoutes } from './auth.js';
 import { initModelRouterDB } from './modelRouter.js';
 import pg from 'pg';
 
-const isProd = process.env.NODE_ENV === 'production';
-
-// Helper: timeout wrapper for async operations
-function withTimeout<T>(promise: Promise<T>, ms: number, name: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${name} timed out after ${ms}ms`)), ms),
-    ),
-  ]);
-}
-
 async function start() {
-  // Initialize database if DATABASE_URL is set.
-  // In production, prefer degraded mode over crash-loop healthchecks.
+  // Initialize database if DATABASE_URL is set
   let pool: pg.Pool | null = null;
-  let dbHealthy = false;
   if (config.databaseUrl) {
-    const candidatePool = createPool(config.databaseUrl);
+    pool = createPool(config.databaseUrl);
     try {
-      const migrationCount = await withTimeout(
-        runMigrations(candidatePool),
-        15000,
-        'database startup',
-      );
+      const migrationCount = await runMigrations(pool);
       if (migrationCount > 0) {
         console.log(`[pulseboard] database connected, applied ${migrationCount} migration(s)`);
       } else {
         console.log('[pulseboard] database connected, schema up to date');
       }
-      initModelRouterDB(candidatePool);
-      pool = candidatePool;
-      dbHealthy = true;
+      initModelRouterDB(pool);
     } catch (err) {
-      console.error('[pulseboard] database migration/connection failed; continuing in degraded mode:', err);
-      // Close the failed pool attempt
-      try {
-        await candidatePool.end();
-      } catch {
-        // ignore close errors in degraded boot
-      }
-      pool = null;
-      dbHealthy = false;
+      console.error('[pulseboard] database migration failed:', err);
+      process.exit(1);
     }
   } else {
-    console.log('[pulseboard] DATABASE_URL not set, running in-memory mode');
+    console.log('[pulseboard] DATABASE_URL not set, running without persistence');
   }
 
   const fastify = Fastify({
-    logger: isProd
-      ? { level: 'info' }
-      : {
-          level: 'info',
-          transport: {
-            target: 'pino-pretty',
-            options: {
-              translateTime: 'HH:MM:ss Z',
-              ignore: 'pid,hostname',
-            },
-          },
+    logger: {
+      level: 'info',
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          translateTime: 'HH:MM:ss Z',
+          ignore: 'pid,hostname',
         },
+      },
+    },
   });
 
   await fastify.register(cors, {
@@ -92,11 +63,7 @@ async function start() {
   process.on('SIGTERM', shutdown);
 
   fastify.get('/health', async () => {
-    return {
-      status: 'ok',
-      timestamp: Date.now(),
-      db: dbHealthy ? 'connected' : 'degraded',
-    };
+    return { status: 'ok', timestamp: Date.now() };
   });
 
   fastify.get('/stats', async () => {
@@ -107,7 +74,6 @@ async function start() {
     return {
       enabled: !!(config.openaiApiKey && config.githubToken),
       paidEnabled: !!config.stripeSecretKey,
-      stripePublishableKey: config.stripePublishableKey || null,
     };
   });
 
@@ -142,7 +108,7 @@ async function start() {
     console.log(`[pulseboard] discord webhooks: ${config.discordWebhookUrl ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] AI features: ${config.openaiApiKey && config.githubToken ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] Stripe payments: ${config.stripeSecretKey ? 'enabled' : 'disabled'}`);
-    console.log(`[pulseboard] database: ${pool ? (dbHealthy ? 'connected' : 'degraded') : 'in-memory only'}`);
+    console.log(`[pulseboard] database: ${config.databaseUrl ? 'connected' : 'in-memory only'}`);
     console.log(`[pulseboard] GitHub OAuth: ${config.githubOAuthClientId ? 'enabled' : 'disabled'}`);
   } catch (err) {
     fastify.log.error(err);
