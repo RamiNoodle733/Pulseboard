@@ -24,7 +24,6 @@ export default function PromptBar() {
       if (canSubmitFree) {
         socket.emit('ws:submit-prompt', { prompt: text });
       } else if (paidEnabled) {
-        // Create Stripe payment intent, then submit with paymentIntentId
         const res = await fetch(`${SERVER_URL}/stripe/create-intent`, { method: 'POST' });
         if (!res.ok) throw new Error('Payment failed');
         const { paymentIntentId } = await res.json() as { paymentIntentId: string; clientSecret: string };
@@ -45,7 +44,7 @@ export default function PromptBar() {
   return (
     <div className="fixed bottom-16 left-0 right-0 z-20 flex justify-center pointer-events-none px-4">
       <div className="w-full max-w-lg pointer-events-auto">
-        <div className="flex items-center gap-2 bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 glass rounded-xl px-4 py-2.5 shadow-panel">
           <input
             type="text"
             value={prompt}
@@ -56,13 +55,15 @@ export default function PromptBar() {
             className="flex-1 bg-transparent text-zinc-200 text-sm font-mono placeholder:text-zinc-600 outline-none"
             disabled={submitting}
           />
-          <span className="text-xs font-mono text-zinc-600 whitespace-nowrap">
+          <span className="text-[10px] font-mono text-zinc-600 whitespace-nowrap">
             {canSubmitFree ? `${freePromptsRemaining} free` : paidEnabled ? '$0.25' : 'limit reached'}
           </span>
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="text-xs font-mono uppercase tracking-wider px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="text-[11px] font-mono uppercase tracking-wider px-3.5 py-1.5 rounded-lg
+              bg-white/[0.06] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.1]
+              disabled:opacity-20 disabled:cursor-not-allowed transition-all duration-200 font-medium"
           >
             {submitting ? '...' : 'send'}
           </button>

@@ -2,94 +2,80 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSocket } from '../socket';
 import type { ProposalPayload } from '../socket';
 
-const FILTERS = [
-  { label: 'All', value: 'all' },
-  { label: 'Voting', value: 'pr-created' },
-  { label: 'Merged', value: 'merged' },
-  { label: 'Rejected', value: 'rejected' },
-];
-
 export default function ProposalSearch() {
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('all');
   const [results, setResults] = useState<ProposalPayload[]>([]);
-  const [total, setTotal] = useState(0);
   const [searching, setSearching] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const [showResults, setShowResults] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const doSearch = useCallback((q: string, s: string) => {
-    const socket = getSocket();
-    if (!socket) return;
-    setSearching(true);
-    socket.emit('ws:search-proposals', { query: q, status: s !== 'all' ? s : undefined, limit: 20 });
-  }, []);
-
-  // Listen for search results
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
 
-    const handler = (data: { proposals: ProposalPayload[]; total: number }) => {
-      setResults(data.proposals);
-      setTotal(data.total);
+    const handler = ({ proposals }: { proposals: ProposalPayload[]; total: number }) => {
+      setResults(proposals);
       setSearching(false);
+      setShowResults(true);
     };
+
     socket.on('ws:search-results', handler);
     return () => { socket.off('ws:search-results', handler); };
   }, []);
 
-  // Debounced search
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      if (query.trim() || status !== 'all') {
-        doSearch(query, status);
-      } else {
-        setResults([]);
-        setTotal(0);
-      }
-    }, 300);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, status, doSearch]);
+  const doSearch = useCallback((q: string) => {
+    const trimmed = q.trim();
+    if (trimmed.length < 2) {
+      setShowResults(false);
+      return;
+    }
+    setSearching(true);
+    getSocket()?.emit('ws:search-proposals', { query: trimmed, limit: 10 });
+  }, []);
 
-  const showResults = query.trim() || status !== 'all';
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => doSearch(query), 300);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [query, doSearch]);
 
   return (
-    <div className="space-y-2">
-      <input
-        type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search proposals..."
-        className="w-full bg-zinc-800/60 text-zinc-300 text-sm font-mono placeholder:text-zinc-600 outline-none px-2.5 py-1.5 rounded border border-zinc-700/50"
-      />
-
-      <div className="flex gap-1 flex-wrap">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setStatus(f.value)}
-            className={`text-xs font-mono px-2 py-0.5 rounded transition-colors ${
-              status === f.value
-                ? 'bg-zinc-700 text-zinc-200'
-                : 'bg-zinc-800/40 text-zinc-600 hover:text-zinc-400'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+    <div className="relative">
+      <div className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-2 border border-white/[0.04]">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-zinc-600 flex-shrink-0">
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search proposals..."
+          className="flex-1 bg-transparent text-zinc-300 text-xs font-mono placeholder:text-zinc-700 outline-none"
+        />
+        {searching && (
+          <div className="w-3 h-3 border border-zinc-600 border-t-transparent rounded-full animate-spin" />
+        )}
       </div>
 
-      {showResults && (
-        <div className="text-xs font-mono text-zinc-600">
-          {searching ? 'Searching...' : `${total} result${total !== 1 ? 's' : ''}`}
+      {showResults && results.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1.5 glass-strong rounded-xl overflow-hidden shadow-panel z-10 max-h-48 overflow-y-auto">
+          {results.map((p) => (
+            <button
+              key={p.id}
+              className="w-full px-3 py-2.5 text-left hover:bg-white/[0.03] transition-colors border-b border-white/[0.03] last:border-0"
+              onClick={() => {
+                setQuery('');
+                setShowResults(false);
+              }}
+            >
+              <div className="text-[11px] font-mono text-zinc-400 truncate">{p.prompt}</div>
+              <div className="text-[9px] text-zinc-600 mt-0.5 font-mono">
+                {p.status} &middot; #{p.submittedByOrdinal}
+              </div>
+            </button>
+          ))}
         </div>
-      )}
-
-      {showResults && results.length === 0 && !searching && (
-        <p className="text-zinc-700 text-xs font-mono text-center py-4">
-          No proposals found
-        </p>
       )}
     </div>
   );

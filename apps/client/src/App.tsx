@@ -448,13 +448,13 @@ export default function App() {
 
       {error && (
         <div
-          className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30"
+          className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30 animate-fade-in-up"
           style={{
             paddingBottom:
               'max(0.5rem, env(safe-area-inset-bottom, 0.5rem))',
           }}
         >
-          <span className="text-red-400/80 text-sm bg-zinc-900/90 px-3 py-1.5 rounded-full border border-zinc-800">
+          <span className="text-red-400/80 text-xs font-medium glass px-4 py-2 rounded-xl border-red-500/10">
             {error}
           </span>
         </div>

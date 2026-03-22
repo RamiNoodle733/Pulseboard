@@ -29,35 +29,52 @@ export default function HUD({ onColorEdit, onToggleProposals }: HUDProps) {
       className="absolute top-0 left-0 right-0 px-4 py-3 flex items-center justify-between pointer-events-none text-sm z-10"
       style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0.75rem))' }}
     >
-      {/* Left: color dot + auth + XP bar */}
-      <div className="flex items-center gap-3 pointer-events-auto">
+      {/* Left: color + auth + XP */}
+      <div className="flex items-center gap-2.5 pointer-events-auto">
         <button
           onClick={onColorEdit}
-          className="w-6 h-6 rounded-full border border-zinc-800 hover:scale-110 transition-transform"
+          className="relative w-7 h-7 rounded-full border-2 border-white/10 hover:border-white/25 transition-all duration-200 hover:scale-110 group"
           style={{ backgroundColor: myColor }}
-        />
+          title="Change color"
+        >
+          <span
+            className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            style={{ boxShadow: `0 0 12px ${myColor}60` }}
+          />
+        </button>
+
         <AuthButton />
+
         {isAuthenticated && (
-          <div className="flex items-center gap-1.5">
-            <div className="w-16 h-1.5 bg-zinc-800 rounded-full overflow-hidden" title={`${Math.floor(xp)} / ${xpToNextLevel} XP to Lv.${level + 1}`}>
+          <div className="flex items-center gap-1.5 ml-0.5">
+            <span className="text-[10px] font-mono text-amber-400/70 tabular-nums">
+              Lv.{level}
+            </span>
+            <div
+              className="w-20 h-1.5 bg-white/[0.04] rounded-full overflow-hidden"
+              title={`${Math.floor(xp)} / ${xpToNextLevel} XP`}
+            >
               <div
-                className="h-full bg-amber-500 rounded-full transition-all duration-500"
-                style={{ width: `${xpPercent}%` }}
+                className="h-full rounded-full transition-all duration-700 ease-out"
+                style={{
+                  width: `${xpPercent}%`,
+                  background: 'linear-gradient(90deg, #f59e0b, #fbbf24)',
+                }}
               />
             </div>
           </div>
         )}
       </div>
 
-      {/* Right: leaderboard, upgrades, proposals, mute, count, status */}
-      <div className="flex items-center gap-3 pointer-events-auto">
+      {/* Right: actions + status */}
+      <div className="flex items-center gap-1 pointer-events-auto">
         {isAuthenticated && (
           <button
             onClick={() => setShowUpgradeShop(true)}
-            className="text-zinc-600 hover:text-amber-400 transition-colors"
+            className="p-2 rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-white/[0.04] transition-all duration-200"
             title="Upgrade Shop"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 2L2 7l10 5 10-5-10-5z" />
               <path d="M2 17l10 5 10-5" />
               <path d="M2 12l10 5 10-5" />
@@ -66,10 +83,10 @@ export default function HUD({ onColorEdit, onToggleProposals }: HUDProps) {
         )}
         <button
           onClick={() => setShowLeaderboard(true)}
-          className="text-zinc-600 hover:text-amber-400 transition-colors"
+          className="p-2 rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-white/[0.04] transition-all duration-200"
           title="Leaderboard"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 7 7 7 7" />
             <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 17 7 17 7" />
             <path d="M4 22h16" />
@@ -81,44 +98,47 @@ export default function HUD({ onColorEdit, onToggleProposals }: HUDProps) {
         {aiEnabled && (
           <button
             onClick={onToggleProposals}
-            className="relative text-zinc-600 hover:text-zinc-400 transition-colors"
+            className="relative p-2 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04] transition-all duration-200"
             title="Proposals"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 18h6" />
               <path d="M10 22h4" />
               <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
             </svg>
             {activeProposals > 0 && (
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500" />
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 animate-pulse-ring" />
             )}
           </button>
         )}
         <button
           onClick={toggleSound}
-          className="text-zinc-600 hover:text-zinc-400 transition-colors"
+          className="p-2 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04] transition-all duration-200"
           title={soundEnabled ? 'Mute' : 'Unmute'}
         >
           {soundEnabled ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
               <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
               <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
             </svg>
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
               <line x1="23" y1="9" x2="17" y2="15" />
               <line x1="17" y1="9" x2="23" y2="15" />
             </svg>
           )}
         </button>
-        <span className="text-zinc-700 tabular-nums">{userCount}</span>
-        <span
-          className={`w-2 h-2 rounded-full ${
-            connected ? 'bg-emerald-600' : 'bg-red-600'
-          }`}
-        />
+
+        <div className="flex items-center gap-2 ml-1 pl-2 border-l border-white/[0.06]">
+          <span className="text-zinc-600 tabular-nums font-mono text-xs">{userCount}</span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
+              connected ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]' : 'bg-red-500'
+            }`}
+          />
+        </div>
       </div>
     </div>
   );

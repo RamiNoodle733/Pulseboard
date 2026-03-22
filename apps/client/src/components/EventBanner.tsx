@@ -2,13 +2,13 @@ import { useStore } from '../store';
 import { useEffect, useState } from 'react';
 import { playEventSound } from '../audio';
 
-const EVENT_COLORS: Record<string, string> = {
-  surge: 'border-amber-500/40 text-amber-300',
-  convergence: 'border-cyan-500/40 text-cyan-300',
-  resonance_wave: 'border-white/30 text-white',
-  city_awakening: 'border-green-500/40 text-green-300',
-  quiet_zone: 'border-zinc-700/40 text-zinc-500',
-  record_broken: 'border-yellow-500/40 text-yellow-300',
+const EVENT_STYLES: Record<string, { border: string; text: string; glow: string }> = {
+  surge:           { border: 'border-amber-500/30', text: 'text-amber-300', glow: 'shadow-[0_0_20px_rgba(245,158,11,0.15)]' },
+  convergence:     { border: 'border-cyan-500/30',  text: 'text-cyan-300',  glow: 'shadow-[0_0_20px_rgba(6,182,212,0.15)]' },
+  resonance_wave:  { border: 'border-white/20',     text: 'text-white',     glow: 'shadow-[0_0_20px_rgba(255,255,255,0.1)]' },
+  city_awakening:  { border: 'border-green-500/30', text: 'text-green-300', glow: 'shadow-[0_0_20px_rgba(34,197,94,0.15)]' },
+  quiet_zone:      { border: 'border-zinc-700/30',  text: 'text-zinc-500',  glow: '' },
+  record_broken:   { border: 'border-yellow-500/30', text: 'text-yellow-300', glow: 'shadow-[0_0_20px_rgba(234,179,8,0.15)]' },
 };
 
 export default function EventBanner() {
@@ -23,7 +23,6 @@ export default function EventBanner() {
       setLastEventId(currentEvent.id);
       setVisible(true);
       playEventSound(soundEnabled, currentEvent.type);
-
       const timeout = setTimeout(() => setVisible(false), currentEvent.duration);
       return () => clearTimeout(timeout);
     } else if (!currentEvent) {
@@ -32,35 +31,25 @@ export default function EventBanner() {
   }, [currentEvent, lastEventId, soundEnabled]);
 
   const showNarration = !visible && narration;
-
   if (!visible && !showNarration) return null;
 
   if (showNarration) {
     return (
-      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-15 pointer-events-none">
-        <div className="px-4 py-1.5 text-sm text-zinc-500 italic text-center max-w-md opacity-70 transition-opacity duration-1000">
+      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-15 pointer-events-none animate-fade-in">
+        <div className="px-6 py-2 text-xs text-zinc-500 italic text-center max-w-md leading-relaxed">
           {narration}
         </div>
       </div>
     );
   }
 
-  const colorClass = EVENT_COLORS[currentEvent?.type || ''] || 'border-zinc-700/40 text-zinc-400';
+  const style = EVENT_STYLES[currentEvent?.type || ''] || { border: 'border-zinc-700/30', text: 'text-zinc-400', glow: '' };
 
   return (
     <div className="fixed top-12 left-1/2 -translate-x-1/2 z-15 pointer-events-none animate-fade-in">
-      <div className={`px-4 py-1.5 bg-black/70 backdrop-blur-sm border rounded-full text-sm tracking-wider uppercase ${colorClass}`}>
+      <div className={`px-5 py-2 glass rounded-full text-xs tracking-[0.15em] uppercase font-medium ${style.border} ${style.text} ${style.glow}`}>
         {currentEvent?.title}
       </div>
-      <style>{`
-        @keyframes fade-in {
-          from { opacity: 0; transform: translateY(-8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in {
-          animation: fade-in 0.4s ease-out;
-        }
-      `}</style>
     </div>
   );
 }
