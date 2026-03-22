@@ -52,16 +52,15 @@ export async function ensureDeviceUser(
   return newRows[0].id;
 }
 
-export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): void {
-  if (!config.githubOAuthClientId || !config.githubOAuthClientSecret) {
-    console.log('[auth] GitHub OAuth not configured, skipping auth routes');
-    return;
-  }
-
-  // clientUrl: where to redirect the browser after OAuth completes (trailing slash stripped)
+export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool | null): void {
   const clientUrl = (config.clientUrls[0] || 'http://localhost:5173').replace(/\/+$/, '');
 
+  const oauthReady = !!(config.githubOAuthClientId && config.githubOAuthClientSecret && pool);
+
   fastify.get('/auth/github', async (_request, reply) => {
+    if (!oauthReady) {
+      return reply.redirect(`${clientUrl}?auth_error=oauth_not_configured`);
+    }
     const state = Math.random().toString(36).substring(2);
     const params = new URLSearchParams({
       client_id: config.githubOAuthClientId!,
@@ -73,13 +72,15 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
   });
 
   fastify.get('/auth/github/callback', async (request, reply) => {
+    if (!oauthReady) {
+      return reply.redirect(`${clientUrl}?auth_error=oauth_not_configured`);
+    }
     const { code } = request.query as { code?: string };
     if (!code) {
       return reply.code(400).send({ error: 'Missing code parameter' });
     }
 
     try {
-      // Exchange code for access token
       const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
         headers: {
@@ -99,7 +100,6 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
         return reply.redirect(`${clientUrl}?auth_error=token_exchange_failed`);
       }
 
-      // Fetch user info
       const userRes = await fetch('https://api.github.com/user', {
         headers: { Authorization: `Bearer ${tokenData.access_token}` },
       });
@@ -110,8 +110,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
         avatar_url: string;
       };
 
-      // Upsert user in DB - check by github_id first
-      const { rows: existing } = await pool.query(
+      const { rows: existing } = await pool!.query(
         'SELECT id, device_id FROM users WHERE github_id = $1',
         [ghUser.id],
       );
@@ -122,28 +121,26 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
       if (existing.length > 0) {
         userId = existing[0].id;
         deviceId = existing[0].device_id;
-        await pool.query(
+        await pool!.query(
           `UPDATE users SET username = $2, display_name = $3, avatar_url = $4, last_seen_at = NOW()
            WHERE id = $1`,
           [userId, ghUser.login, ghUser.name || ghUser.login, ghUser.avatar_url],
         );
       } else {
-        // Create new user with a generated device_id
         deviceId = `gh_${ghUser.id}`;
-        // Try to link to existing anonymous user with matching device_id, or create new
-        const { rows: anonUser } = await pool.query(
+        const { rows: anonUser } = await pool!.query(
           'SELECT id FROM users WHERE device_id = $1',
           [deviceId],
         );
         if (anonUser.length > 0) {
           userId = anonUser[0].id;
-          await pool.query(
+          await pool!.query(
             `UPDATE users SET github_id = $1, username = $2, display_name = $3, avatar_url = $4, last_seen_at = NOW()
              WHERE id = $5`,
             [ghUser.id, ghUser.login, ghUser.name || ghUser.login, ghUser.avatar_url, userId],
           );
         } else {
-          const { rows: newUser } = await pool.query(
+          const { rows: newUser } = await pool!.query(
             `INSERT INTO users (github_id, username, display_name, avatar_url, device_id)
              VALUES ($1, $2, $3, $4, $5) RETURNING id`,
             [ghUser.id, ghUser.login, ghUser.name || ghUser.login, ghUser.avatar_url, deviceId],
@@ -152,7 +149,6 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
         }
       }
 
-      // Sign JWT
       const token = jwt.sign(
         { userId, githubId: ghUser.id, username: ghUser.login, deviceId } as JWTPayload,
         config.jwtSecret,
@@ -167,6 +163,9 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
   });
 
   fastify.get('/auth/me', async (request, reply) => {
+    if (!pool) {
+      return reply.code(503).send({ error: 'Database not available' });
+    }
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return reply.code(401).send({ error: 'Not authenticated' });
@@ -196,6 +195,9 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
   });
 
   fastify.get('/auth/profile', async (request, reply) => {
+    if (!pool) {
+      return reply.code(503).send({ error: 'Database not available' });
+    }
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return reply.code(401).send({ error: 'Not authenticated' });
@@ -216,7 +218,6 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
 
     const user = rows[0];
 
-    // Load XP profile
     const { rows: xpRows } = await pool.query(
       'SELECT xp, total_xp, level, login_streak FROM user_xp WHERE user_id = $1',
       [payload.userId],
@@ -230,7 +231,6 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
       loginStreak: xpRows[0].login_streak,
     } : { userId: payload.userId, xp: 0, totalXP: 0, level: 1, xpToNextLevel: 100, loginStreak: 0 };
 
-    // Load upgrades
     const { rows: upgradeRows } = await pool.query(
       `SELECT uu.upgrade_id, u.slug, u.name, u.category, uu.level, u.max_level
        FROM user_upgrades uu JOIN upgrades u ON u.id = uu.upgrade_id
@@ -261,7 +261,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, pool: pg.Pool): voi
     return reply.send({ ok: true });
   });
 
-  console.log('[auth] GitHub OAuth routes registered');
+  console.log(`[auth] auth routes registered (OAuth: ${oauthReady ? 'enabled' : 'disabled — missing DB or credentials'})`);
 }
 
 // Build the server's own public URL for OAuth redirect_uri.

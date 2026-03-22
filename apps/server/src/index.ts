@@ -51,12 +51,8 @@ async function start() {
 
   const wsServer = createWSServer(fastify.server, pool);
 
-  // Register auth routes if DB is available
-  if (pool) {
-    registerAuthRoutes(fastify, pool);
-  } else {
-    console.log('[auth] Database not configured, auth routes not available');
-  }
+  // Always register auth routes — they handle missing DB gracefully
+  registerAuthRoutes(fastify, pool);
 
   // graceful shutdown: save stats before exit
   const shutdown = () => {
