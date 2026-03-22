@@ -56,6 +56,17 @@ COLOR_CHANGE_COOLDOWN=300
 # Sync Settings
 SYNC_WINDOW_MS=600
 SYNC_REQUIRED_USERS=8
+
+# Database (required for auth, XP, and persistence)
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+
+# GitHub OAuth (required for user authentication)
+GITHUB_OAUTH_CLIENT_ID=your_client_id
+GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
+JWT_SECRET=your-random-secret-string
+
+# Server Public URL (required for OAuth redirect in production)
+SERVER_PUBLIC_URL=https://your-app.railway.app
 ```
 
 ### Client (Optional)
@@ -166,6 +177,25 @@ taskkill /PID <PID> /F
 - Check `VITE_SERVER_URL` in client
 - Check `CLIENT_URL` in server
 - Check CORS settings
+
+### GitHub Login Returns 404
+
+If you get `{"message":"Route GET:/auth/github not found","error":"Not Found","statusCode":404}`:
+
+1. **Check `/auth/status` endpoint**: Visit `http://your-server:3000/auth/status` to see the configuration status
+2. **Verify Database**: Make sure `DATABASE_URL` environment variable is set (auth requires database)
+3. **Verify GitHub OAuth**: Make sure both `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET` are set
+4. **Check logs**: Look for these messages in server logs:
+   - `[auth] GitHub OAuth routes registered` - Routes are working
+   - `[auth] GitHub OAuth not configured, skipping auth routes` - Missing OAuth credentials
+   - `[auth] Database not configured, auth routes not available` - Missing database
+
+To set up GitHub OAuth:
+1. Go to https://github.com/settings/developers
+2. Create a new OAuth App
+3. Set Authorization callback URL to `https://your-server.com/auth/github/callback`
+4. Copy the Client ID and generate a Client Secret
+5. Add them to your environment variables
 
 ### Dependencies Not Installing
 

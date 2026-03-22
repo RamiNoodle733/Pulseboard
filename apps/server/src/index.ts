@@ -51,6 +51,8 @@ async function start() {
   // Register auth routes if DB is available
   if (pool) {
     registerAuthRoutes(fastify, pool);
+  } else {
+    console.log('[auth] Database not configured, auth routes not available');
   }
 
   // graceful shutdown: save stats before exit
@@ -74,6 +76,14 @@ async function start() {
     return {
       enabled: !!(config.openaiApiKey && config.githubToken),
       paidEnabled: !!config.stripeSecretKey,
+    };
+  });
+
+  fastify.get('/auth/status', async () => {
+    return {
+      databaseConfigured: !!pool,
+      githubOAuthConfigured: !!(config.githubOAuthClientId && config.githubOAuthClientSecret),
+      authRoutesAvailable: !!(pool && config.githubOAuthClientId && config.githubOAuthClientSecret),
     };
   });
 
