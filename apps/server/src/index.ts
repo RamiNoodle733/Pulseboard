@@ -22,7 +22,10 @@ async function start() {
       initModelRouterDB(pool);
     } catch (err) {
       console.error('[pulseboard] database migration failed:', err);
-      process.exit(1);
+      console.error('[pulseboard] continuing without database, using in-memory mode');
+      // Don't exit - fall back to in-memory mode
+      await pool.end().catch(() => {});
+      pool = null;
     }
   } else {
     console.log('[pulseboard] DATABASE_URL not set, running without persistence');
@@ -118,7 +121,7 @@ async function start() {
     console.log(`[pulseboard] discord webhooks: ${config.discordWebhookUrl ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] AI features: ${config.openaiApiKey && config.githubToken ? 'enabled' : 'disabled'}`);
     console.log(`[pulseboard] Stripe payments: ${config.stripeSecretKey ? 'enabled' : 'disabled'}`);
-    console.log(`[pulseboard] database: ${config.databaseUrl ? 'connected' : 'in-memory only'}`);
+    console.log(`[pulseboard] database: ${pool ? 'connected' : 'in-memory only'}`);
     console.log(`[pulseboard] GitHub OAuth: ${config.githubOAuthClientId ? 'enabled' : 'disabled'}`);
   } catch (err) {
     fastify.log.error(err);

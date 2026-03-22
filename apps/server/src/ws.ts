@@ -139,14 +139,26 @@ export function createWSServer(httpServer: HTTPServer, pool: pg.Pool | null): WS
 
   // Initialize
   (async () => {
-    if (dbStatsManager) {
-      await dbStatsManager.loadFromDB();
-      dbStatsManager.startAutoSave();
-    } else {
-      fallbackStatsManager!.startAutoSave();
-    }
-    if (fallbackProposalManager) {
-      fallbackProposalManager.startAutoSave();
+    try {
+      if (dbStatsManager) {
+        await dbStatsManager.loadFromDB();
+        dbStatsManager.startAutoSave();
+      } else {
+        fallbackStatsManager!.startAutoSave();
+      }
+      if (fallbackProposalManager) {
+        fallbackProposalManager.startAutoSave();
+      }
+    } catch (err) {
+      console.error('[ws] initialization error:', err);
+      console.error('[ws] continuing with degraded functionality');
+      // Fall back to non-DB mode if database initialization fails
+      if (fallbackStatsManager && !dbStatsManager) {
+        fallbackStatsManager.startAutoSave();
+      }
+      if (fallbackProposalManager) {
+        fallbackProposalManager.startAutoSave();
+      }
     }
   })();
 
