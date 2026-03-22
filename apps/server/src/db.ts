@@ -246,9 +246,11 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
   period      VARCHAR(20) NOT NULL DEFAULT 'daily',
   summary     TEXT NOT NULL,
   stats       JSONB DEFAULT '{}',
-  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (period, generated_at::date)
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_summaries_period_date
+  ON daily_summaries (period, (generated_at::date));
 
 -- Achievement definitions (seeded below)
 CREATE TABLE IF NOT EXISTS achievements (
@@ -306,10 +308,20 @@ export async function runMigrations(pool: pg.Pool): Promise<number> {
   for (const migration of MIGRATIONS) {
     if (appliedSet.has(migration.name)) continue;
     console.log(`[db] applying migration: ${migration.name}`);
-    await pool.query(migration.sql);
-    await pool.query('INSERT INTO _migrations (name) VALUES ($1)', [migration.name]);
-    console.log(`[db] applied migration: ${migration.name}`);
-    count++;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(migration.sql);
+      await client.query('INSERT INTO _migrations (name) VALUES ($1)', [migration.name]);
+      await client.query('COMMIT');
+      console.log(`[db] applied migration: ${migration.name}`);
+      count++;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   return count;
