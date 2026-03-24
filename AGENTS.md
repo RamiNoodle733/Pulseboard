@@ -22,3 +22,13 @@ npm run dev:client   # client only
 - **In-memory mode**: The server runs without a database when `DATABASE_URL` is not set. Auth, XP, leaderboards, and persistence features are disabled but the core pulse/sync loop works fully.
 - **SYNC_REQUIRED_USERS**: Defaults to `2` in `.env.example`. Set this low for local testing so sync events can be triggered with fewer browser tabs.
 - **Optional services**: PostgreSQL, GitHub OAuth, OpenAI, Stripe, and Discord are all optional. The server gracefully degrades when their env vars are absent.
+
+### External service setup (user responsibility)
+
+These services require external account setup and cannot be configured by the agent:
+- **PostgreSQL**: Set `DATABASE_URL` for persistence (auth, XP, leaderboards, territories, proposals). Server auto-runs migrations on startup.
+- **GitHub OAuth**: Create an OAuth App at https://github.com/settings/developers, set `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `JWT_SECRET`.
+- **OpenAI**: Set `OPENAI_API_KEY` for AI narrator, insights, and code proposal features.
+- **Stripe**: Set `STRIPE_SECRET_KEY` for paid AI prompts ($0.25/prompt). No Stripe.js embedded checkout — the client uses a simple payment intent flow.
+- **GitHub Token**: Set `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO` for AI-powered code proposals (creates real PRs).
+- **Discord**: Set `DISCORD_WEBHOOK_URL` for streak milestone notifications.
