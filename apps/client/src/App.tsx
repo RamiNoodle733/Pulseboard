@@ -137,6 +137,9 @@ export default function App() {
             xpToNextLevel: xp.xpToNextLevel,
             leveledUp: false,
           });
+          if (xp.loginStreak) {
+            store().setLoginStreak(xp.loginStreak);
+          }
         }
         if (multipliers) {
           store().setMultipliers(multipliers);
@@ -206,7 +209,12 @@ export default function App() {
 
     socket.on('ws:streak-broken', () => store().updateStreak(0));
     socket.on('ws:user-count', ({ count }) => store().setUserCount(count));
-    socket.on('ws:color-changed', () => {});
+    socket.on('ws:color-changed', ({ userId, color }) => {
+      const s = store();
+      if (s.myUserId && userId === s.myUserId) {
+        s.setMyColor(color);
+      }
+    });
     socket.on('ws:error', ({ message }) => store().setError(message));
     socket.on('ws:feed', (entry: FeedEntry) => store().addFeedEntry(entry));
     socket.on('ws:global-stats', (stats: GlobalStatsPayload) => store().setGlobalStats(stats));

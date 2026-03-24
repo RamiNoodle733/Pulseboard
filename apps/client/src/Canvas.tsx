@@ -71,10 +71,20 @@ export default function Canvas({ width, height }: CanvasProps) {
       territoryRef.current = state.territoryData;
       myCityRef.current = state.myCity;
 
+      // Populate cityGeoCache from world state lat/lon data
+      if (state.worldState) {
+        for (const city of state.worldState.cities) {
+          if (city.lat !== 0 || city.lon !== 0) {
+            cityGeoCache.set(city.city, { lat: city.lat, lon: city.lon });
+          }
+        }
+      }
+
+      const trailStyle = state.multipliers?.trailStyle ?? 0;
       if (state.pulses.length > prevCount) {
         const newPulses = state.pulses.slice(prevCount);
         for (const p of newPulses) {
-          particleSystem.current.emitPresenceTrail(p.x, p.y, p.color, p.energy);
+          particleSystem.current.emitPresenceTrail(p.x, p.y, p.color, p.energy, trailStyle);
         }
       }
     });

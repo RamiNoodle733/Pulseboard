@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSocket } from '../socket';
+import { useStore } from '../store';
 import type { ProposalPayload } from '../socket';
 
 export default function ProposalSearch() {
@@ -65,8 +66,11 @@ export default function ProposalSearch() {
               key={p.id}
               className="w-full px-3 py-2.5 text-left hover:bg-white/[0.03] transition-colors border-b border-white/[0.03] last:border-0"
               onClick={() => {
+                useStore.getState().upsertProposal(p);
                 setQuery('');
                 setShowResults(false);
+                const el = document.getElementById(`proposal-${p.id}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }}
             >
               <div className="text-[11px] font-mono text-zinc-400 truncate">{p.prompt}</div>

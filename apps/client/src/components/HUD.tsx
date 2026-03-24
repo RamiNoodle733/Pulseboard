@@ -1,4 +1,5 @@
 import { useStore } from '../store';
+import { getSocket } from '../socket';
 import AuthButton from './AuthButton';
 
 interface HUDProps {
@@ -70,7 +71,7 @@ export default function HUD({ onColorEdit, onToggleProposals }: HUDProps) {
       <div className="flex items-center gap-1 pointer-events-auto">
         {isAuthenticated && (
           <button
-            onClick={() => setShowUpgradeShop(true)}
+            onClick={() => { getSocket()?.emit('ws:get-upgrades'); setShowUpgradeShop(true); }}
             className="p-2 rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-white/[0.04] transition-all duration-200"
             title="Upgrade Shop"
           >

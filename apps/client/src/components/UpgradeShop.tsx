@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { getSocket } from '../socket';
+import { playUpgradePurchase } from '../audio';
 import type { UpgradeDef } from '../socket';
 
 const CATEGORY_CONFIG = {
@@ -20,6 +21,7 @@ function UpgradeCard({ def, userLevel, userXP }: { def: UpgradeDef; userLevel: n
     if (isMaxed || !canAfford || purchasing) return;
     setPurchasing(true);
     getSocket()?.emit('ws:purchase-upgrade', { upgradeSlug: def.slug });
+    playUpgradePurchase(useStore.getState().soundEnabled);
     setTimeout(() => setPurchasing(false), 2000);
   }
 
