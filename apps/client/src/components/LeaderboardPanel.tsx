@@ -25,8 +25,8 @@ export default function LeaderboardPanel() {
   if (!show) return null;
 
   function switchBoard(type: string) {
+    setLeaderboard(type, entries);
     getSocket()?.emit('ws:get-leaderboard', { type, limit: 50 });
-    setLeaderboard(type, []);
   }
 
   return (

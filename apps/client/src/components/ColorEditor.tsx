@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { getSocket } from '../socket';
 import { useStore } from '../store';
 
@@ -16,6 +16,10 @@ interface ColorEditorProps {
 
 export default function ColorEditor({ currentColor, onClose }: ColorEditorProps) {
   const [value, setValue] = useState(currentColor);
+
+  useEffect(() => {
+    setValue(currentColor);
+  }, [currentColor]);
 
   const apply = (color: string) => {
     const socket = getSocket();

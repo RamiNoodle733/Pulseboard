@@ -29,7 +29,11 @@ export default function ProfilePanel() {
 
   if (!show) return null;
 
-  const xpProgress = xpToNextLevel > 0 ? Math.max(0, 1 - xpToNextLevel / (xp + xpToNextLevel)) : 1;
+  const xpForLevel = (lvl: number) => lvl <= 1 ? 0 : Math.floor(100 * Math.pow(1.4, lvl - 2));
+  const currentLevelXP = xpForLevel(level);
+  const nextLevelXP = xpForLevel(level + 1);
+  const levelSpan = nextLevelXP - currentLevelXP;
+  const xpProgress = levelSpan > 0 ? Math.max(0, Math.min(1, (totalXP - currentLevelXP) / levelSpan)) : 1;
 
   function handleSignOut() {
     localStorage.removeItem('pulseboard:token');
@@ -182,12 +186,26 @@ export default function ProfilePanel() {
                 <span className="text-amber-400 font-mono font-medium">{level}</span>
               </div>
               {profileData?.stats && (
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Member Since</span>
-                  <span className="text-zinc-300">
-                    {new Date(profileData.stats.memberSince).toLocaleDateString()}
-                  </span>
-                </div>
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Energy Contributed</span>
+                    <span className="text-zinc-300 font-mono">{Math.round(profileData.stats.totalEnergyContributed).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Syncs Participated</span>
+                    <span className="text-zinc-300 font-mono">{profileData.stats.syncsParticipated.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Cities Influenced</span>
+                    <span className="text-zinc-300 font-mono">{profileData.stats.citiesInfluenced.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Member Since</span>
+                    <span className="text-zinc-300">
+                      {new Date(profileData.stats.memberSince).toLocaleDateString()}
+                    </span>
+                  </div>
+                </>
               )}
             </div>
           </div>

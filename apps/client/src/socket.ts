@@ -48,6 +48,8 @@ export interface WorldSnapshot {
     city: string;
     energy: number;
     momentum: number;
+    lat: number;
+    lon: number;
   }>;
   phase: {
     name: WorldPhaseName;

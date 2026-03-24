@@ -24,6 +24,8 @@ export interface WorldSnapshot {
     city: string;
     energy: number;
     momentum: number;
+    lat: number;
+    lon: number;
   }>;
   phase: WorldPhase;
   hotZones: string[];
@@ -162,6 +164,8 @@ export function createWorldStateManager() {
         city: n.city,
         energy: Math.round(n.energy * 100) / 100,
         momentum: Math.round(n.momentum * 100) / 100,
+        lat: n.lat,
+        lon: n.lon,
       })),
       phase: { ...currentPhase },
       hotZones: sorted.slice(0, 3).filter((n) => n.energy > 10).map((n) => n.city),

@@ -35,7 +35,7 @@ export default function EventBanner() {
 
   if (showNarration) {
     return (
-      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-15 pointer-events-none animate-fade-in">
+      <div className="fixed top-14 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fade-in">
         <div className="px-6 py-2 text-xs text-zinc-500 italic text-center max-w-md leading-relaxed">
           {narration}
         </div>
@@ -46,7 +46,7 @@ export default function EventBanner() {
   const style = EVENT_STYLES[currentEvent?.type || ''] || { border: 'border-zinc-700/30', text: 'text-zinc-400', glow: '' };
 
   return (
-    <div className="fixed top-12 left-1/2 -translate-x-1/2 z-15 pointer-events-none animate-fade-in">
+    <div className="fixed top-12 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fade-in">
       <div className={`px-5 py-2 glass rounded-full text-xs tracking-[0.15em] uppercase font-medium ${style.border} ${style.text} ${style.glow}`}>
         {currentEvent?.title}
       </div>

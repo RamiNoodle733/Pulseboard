@@ -211,6 +211,8 @@ interface Store {
   setLevelUpNotification: (level: number) => void;
   clearLevelUpNotification: () => void;
 
+  setLoginStreak: (streak: number) => void;
+
   // Achievement actions
   setAchievements: (a: UserAchievement[]) => void;
   addAchievement: (a: UserAchievement) => void;
@@ -506,6 +508,8 @@ export const useStore = create<Store>((set) => ({
     set({ levelUpNotification: { level, t: Date.now() } }),
 
   clearLevelUpNotification: () => set({ levelUpNotification: null }),
+
+  setLoginStreak: (streak) => set({ loginStreak: streak }),
 
   // Achievement actions
   setAchievements: (a) => set({ achievements: a }),

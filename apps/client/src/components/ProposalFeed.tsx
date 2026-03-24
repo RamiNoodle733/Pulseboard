@@ -31,7 +31,7 @@ function ProposalCard({ proposal }: { proposal: ProposalPayload }) {
   const status = STATUS_CONFIG[proposal.status] || STATUS_CONFIG.submitted;
 
   return (
-    <div className="bg-white/[0.02] rounded-xl p-3.5 border border-white/[0.05] space-y-2.5 hover:border-white/[0.08] transition-all duration-200">
+    <div id={`proposal-${proposal.id}`} className="bg-white/[0.02] rounded-xl p-3.5 border border-white/[0.05] space-y-2.5 hover:border-white/[0.08] transition-all duration-200">
       <p className="text-zinc-300 text-sm font-mono leading-relaxed">
         &ldquo;{proposal.prompt}&rdquo;
       </p>
